@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go version *)",
+      "Bash(git --version)",
+      "Read(//Users/nick/go/pkg/mod/github.com/**)"
+    ]
+  }
+}
