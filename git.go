@@ -40,9 +40,26 @@ func (e *GitError) Error() string {
 func (e *GitError) Unwrap() error { return e.Err }
 
 // Git runs git commands against the repository that contains Dir. New
-// worktrees are created directly inside Dir.
+// worktrees are created inside Root.
 type Git struct {
-	Dir string
+	Dir  string // the directory wtm runs in
+	Root string // where new worktrees go; Dir when empty
+}
+
+func (g Git) root() string {
+	if g.Root == "" {
+		return g.Dir
+	}
+	return g.Root
+}
+
+// relInside returns path relative to base, if path is inside base.
+func relInside(base, path string) (string, bool) {
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
 }
 
 func (g Git) run(args ...string) (string, error) {
@@ -107,25 +124,35 @@ func parseWorktrees(out string) []Worktree {
 	return list
 }
 
-// Name is how a worktree is shown and named: its path relative to Dir.
+// Name is how a worktree is shown and named: its path relative to Root.
+// Worktrees outside Root are shown as ./path relative to Dir, or in full.
 func (g Git) Name(wt Worktree) string {
-	rel, err := filepath.Rel(g.Dir, wt.Path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return wt.Path
+	if rel, ok := g.InRoot(wt); ok {
+		return rel
 	}
-	return rel
+	return g.arg(wt.Path)
+}
+
+// InRoot returns the worktree's path relative to Root, if it is inside it.
+func (g Git) InRoot(wt Worktree) (string, bool) {
+	return relInside(g.root(), wt.Path)
+}
+
+// Path is where the worktree called name lives.
+func (g Git) Path(name string) string {
+	return filepath.Join(g.root(), name)
 }
 
 // arg passes paths inside Dir to git as ./name, which keeps git's messages short.
 func (g Git) arg(path string) string {
-	if name := g.Name(Worktree{Path: path}); !filepath.IsAbs(name) {
-		return "./" + name
+	if rel, ok := relInside(g.Dir, path); ok {
+		return "./" + rel
 	}
 	return path
 }
 
 // validateName checks that name works both as a branch name and as a
-// directory inside Dir.
+// directory inside Root.
 func (g Git) validateName(name string) error {
 	if name == "" {
 		return errors.New("a name is required")
@@ -145,7 +172,7 @@ func (g Git) branchExists(name string) bool {
 	return err == nil
 }
 
-// Create adds a worktree at Dir/name on a new branch called name, based on base.
+// Create adds a worktree at Root/name on a new branch called name, based on base.
 func (g Git) Create(name, base string) error {
 	if err := g.validateName(name); err != nil {
 		return err
@@ -153,7 +180,7 @@ func (g Git) Create(name, base string) error {
 	if base == "" {
 		base = "main"
 	}
-	_, err := g.run("worktree", "add", "-b", name, g.arg(filepath.Join(g.Dir, name)), base)
+	_, err := g.run("worktree", "add", "-b", name, g.arg(g.Path(name)), base)
 	return err
 }
 
@@ -202,7 +229,7 @@ func (g Git) checkMerged(branch string) error {
 	return err
 }
 
-// Rename moves the worktree to Dir/newName and renames its branch to newName.
+// Rename moves the worktree to Root/newName and renames its branch to newName.
 func (g Git) Rename(wt Worktree, newName string) error {
 	if wt.Main {
 		return errors.New("the main worktree can't be renamed")
@@ -210,7 +237,7 @@ func (g Git) Rename(wt Worktree, newName string) error {
 	if err := g.validateName(newName); err != nil {
 		return err
 	}
-	newPath := filepath.Join(g.Dir, newName)
+	newPath := g.Path(newName)
 	renameBranch := wt.Branch != "" && wt.Branch != newName
 	if renameBranch && g.branchExists(newName) {
 		return fmt.Errorf("a branch named %q already exists", newName)
@@ -254,12 +281,16 @@ func (g Git) Prune() (int, error) {
 	return n, nil
 }
 
-// removeEmptyParents deletes now-empty directories left between path and Dir,
-// e.g. "feature" after removing the worktree "feature/login".
+// removeEmptyParents deletes now-empty directories left between path and
+// Root (or Dir, for worktrees outside Root), e.g. "feature" after removing the
+// worktree "feature/login". Root and Dir themselves are kept.
 func (g Git) removeEmptyParents(path string) {
+	stop := g.root()
+	if _, ok := relInside(stop, path); !ok {
+		stop = g.Dir
+	}
 	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
-		rel, err := filepath.Rel(g.Dir, dir)
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rel, ok := relInside(stop, dir); !ok || rel == "." {
 			return
 		}
 		if os.Remove(dir) != nil {

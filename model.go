@@ -29,6 +29,13 @@ type (
 		err    error
 		// selectPath is the worktree to focus once the list is reloaded.
 		selectPath string
+		// postCreate is set after a successful create when there is a
+		// .wtm/post_create.sh to run.
+		postCreate *postCreateHook
+	}
+	postCreateDoneMsg struct {
+		status string
+		err    error
 	}
 )
 
@@ -124,7 +131,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showError(msg.err)
 		}
 		// Reload even on failure: a partly applied operation still changes the list.
+		if msg.err == nil && msg.postCreate != nil {
+			m.busy = true
+			m.status = "Running " + filepath.Join(configDir, "post_create.sh") + "…"
+			status := msg.status
+			return m, tea.Batch(m.loadWorktrees(), tea.Exec(msg.postCreate, func(err error) tea.Msg {
+				return postCreateDoneMsg{status: status, err: err}
+			}))
+		}
 		return m, m.loadWorktrees()
+
+	case postCreateDoneMsg:
+		m.busy = false
+		m.status = msg.status + " Ran " + filepath.Join(configDir, "post_create.sh") + "."
+		if msg.err != nil {
+			m.status = ""
+			m.showError(fmt.Errorf("the worktree was created, but %s failed: %w", filepath.Join(configDir, "post_create.sh"), msg.err))
+		}
+		return m, nil
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
@@ -204,7 +228,13 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.target = wt
 		m.mode = modeRename
 		m.formErr = ""
-		m.renameInput.SetValue(m.git.Name(wt))
+		// Renaming moves the worktree into the worktree path, so for one outside
+		// it suggest just its folder name.
+		name, ok := m.git.InRoot(wt)
+		if !ok {
+			name = filepath.Base(wt.Path)
+		}
+		m.renameInput.SetValue(name)
 		m.renameInput.CursorEnd()
 		return m, m.renameInput.Focus()
 	case "p", "P":
@@ -274,11 +304,15 @@ func (m model) updateCreate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		g := m.git
 		return m, func() tea.Msg {
 			err := g.Create(name, base)
-			return opDoneMsg{
+			msg := opDoneMsg{
 				status:     fmt.Sprintf("Created worktree %s from %s.", name, base),
 				err:        err,
-				selectPath: filepath.Join(g.Dir, name),
+				selectPath: g.Path(name),
 			}
+			if script := postCreateScript(g.Dir); err == nil && script != "" {
+				msg.postCreate = newPostCreateHook(script, g, g.Path(name), name, base)
+			}
+			return msg
 		}
 	}
 	var cmd tea.Cmd
@@ -336,7 +370,7 @@ func (m model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return opDoneMsg{
 				status:     fmt.Sprintf("Renamed %s to %s.", oldName, newName),
 				err:        err,
-				selectPath: filepath.Join(g.Dir, newName),
+				selectPath: g.Path(newName),
 			}
 		}
 	}

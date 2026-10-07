@@ -26,7 +26,14 @@ func main() {
 		dir = resolved
 	}
 
-	if _, err := tea.NewProgram(newModel(Git{Dir: dir})).Run(); err != nil {
+	cfg, err := loadConfig(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wtm:", err)
+		os.Exit(1)
+	}
+
+	g := Git{Dir: dir, Root: cfg.root(dir)}
+	if _, err := tea.NewProgram(newModel(g)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wtm:", err)
 		os.Exit(1)
 	}

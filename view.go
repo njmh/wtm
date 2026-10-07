@@ -73,8 +73,17 @@ func (m model) View() tea.View {
 func (m model) mainView() string {
 	var b strings.Builder
 
-	title := titleStyle.Render("Worktree Manager")
-	b.WriteString(" " + title + "  " + mutedStyle.Render(m.shortPath(m.git.Dir)) + "\n\n")
+	title := " " + titleStyle.Render("Worktree Manager") + "  "
+	note := ""
+	if root := m.git.root(); root != m.git.Dir {
+		note = mutedStyle.Render("  →  worktrees in ") + m.shortPath(root)
+	}
+	// Shorten the directory from the left so the worktree path stays visible.
+	dir := m.shortPath(m.git.Dir)
+	if room := max(m.width-ansi.StringWidth(title)-ansi.StringWidth(note), 10); ansi.StringWidth(dir) > room {
+		dir = ansi.TruncateLeft(dir, ansi.StringWidth(dir)-room+1, "…")
+	}
+	b.WriteString(title + mutedStyle.Render(dir) + note + "\n\n")
 
 	b.WriteString(m.listView())
 
@@ -161,8 +170,8 @@ func (m model) listView() string {
 // abbreviates the home directory to ~.
 func (m model) shortPath(path string) string {
 	if path != m.git.Dir {
-		if name := m.git.Name(Worktree{Path: path}); !filepath.IsAbs(name) {
-			return "./" + name
+		if rel, ok := relInside(m.git.Dir, path); ok {
+			return "./" + rel
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -211,6 +220,23 @@ func tagStyle(tag string) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(colorInfo)
 }
 
+// createNote says where new worktrees go, when that isn't the current
+// directory, and whether post_create.sh will run.
+func (m model) createNote() string {
+	var notes []string
+	if root := m.git.root(); root != m.git.Dir {
+		notes = append(notes, "Created in "+m.shortPath(root)+"/")
+	}
+	if postCreateScript(m.git.Dir) != "" {
+		notes = append(notes, "runs "+filepath.Join(configDir, "post_create.sh"))
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	s := strings.Join(notes, ", then ") + "."
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func (m model) modalWidth() int {
 	return max(min(64, m.width-4), 20)
 }
@@ -238,17 +264,19 @@ func (m model) modalView() string {
 		name, base := m.nameInput, m.baseInput
 		name.SetWidth(inner - 3)
 		base.SetWidth(inner - 3)
-		body := strings.Join([]string{
-			titleStyle.Render("Create worktree"),
-			"",
-			labelStyle.Render("Name") + mutedStyle.Render("  (directory and new branch)"),
+		lines := []string{titleStyle.Render("Create worktree"), ""}
+		if note := m.createNote(); note != "" {
+			lines = append(lines, lipgloss.NewStyle().Width(inner).Render(mutedStyle.Render(note)), "")
+		}
+		body := strings.Join(append(lines,
+			labelStyle.Render("Name")+mutedStyle.Render("  (directory and new branch)"),
 			name.View(),
 			"",
 			labelStyle.Render("Base branch"),
 			base.View(),
 			formErr(),
 			hint("enter", "create", "tab", "switch field", "esc", "cancel"),
-		}, "\n")
+		), "\n")
 		return style.Render(body)
 
 	case modeRename:
