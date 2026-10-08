@@ -60,12 +60,14 @@ Runs with `bash` after each successful create, so it doesn't need to be
 executable. wtm hands over the terminal while it runs, so you see its output
 and it can start interactive programs. It runs inside the new worktree with:
 
-| Variable            | Value                                    |
-|---------------------|------------------------------------------|
-| `WTM_WORKTREE_PATH` | Absolute path of the new worktree        |
-| `WTM_BRANCH`        | The new branch (same as the worktree name) |
-| `WTM_BASE_BRANCH`   | The branch it was created from           |
-| `WTM_DIR`           | The directory wtm was started from       |
+| Variable            | Value                                                    |
+|---------------------|----------------------------------------------------------|
+| `WTM_WORKTREE_NAME` | Name of the new worktree, relative to `worktree_path`    |
+| `WTM_WORKTREE_PATH` | Absolute path of the new worktree                        |
+| `WTM_WORKTREE_ROOT` | Absolute path of `worktree_path`                         |
+| `WTM_BRANCH`        | The new branch (currently the same as the worktree name) |
+| `WTM_BASE_BRANCH`   | The branch it was created from                           |
+| `WTM_DIR`           | The directory wtm was started from                       |
 
 ```bash
 # e.g. share an env file and install dependencies

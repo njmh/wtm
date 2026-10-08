@@ -109,24 +109,25 @@ func TestWorktreePath(t *testing.T) {
 
 func TestPostCreateHook(t *testing.T) {
 	g := newContainer(t)
+	g.Root = filepath.Join(g.Dir, "trees")
 	if postCreateScript(g.Dir) != "" {
 		t.Fatal("found a post_create.sh that doesn't exist")
 	}
 	script := filepath.Join(g.Dir, configDir, "post_create.sh")
 	// Not executable: it's run with bash.
 	writeFile(t, script, `echo "pwd=$(pwd)"
-echo "dir=$WTM_DIR path=$WTM_WORKTREE_PATH branch=$WTM_BRANCH base=$WTM_BASE_BRANCH"
+echo "dir=$WTM_DIR root=$WTM_WORKTREE_ROOT name=$WTM_WORKTREE_NAME path=$WTM_WORKTREE_PATH branch=$WTM_BRANCH base=$WTM_BASE_BRANCH"
 [ "$WTM_BRANCH" != fail ] || exit 3
 `)
 	if postCreateScript(g.Dir) != script {
 		t.Fatal("post_create.sh not found")
 	}
-	if err := g.Create("feat", "main"); err != nil {
+	if err := g.Create("feat/x", "main"); err != nil {
 		t.Fatal(err)
 	}
 
 	run := func(branch, stdin string) (string, error) {
-		h := newPostCreateHook(script, g, g.Path("feat"), branch, "main")
+		h := newPostCreateHook(script, g, "feat/x", branch, "main")
 		var out bytes.Buffer
 		h.SetStdin(strings.NewReader(stdin))
 		h.SetStdout(&out)
@@ -135,12 +136,12 @@ echo "dir=$WTM_DIR path=$WTM_WORKTREE_PATH branch=$WTM_BRANCH base=$WTM_BASE_BRA
 		return out.String(), err
 	}
 
-	out, err := run("feat", "")
+	out, err := run("feat/x", "")
 	if err != nil {
 		t.Fatalf("hook failed: %v\n%s", err, out)
 	}
-	path := g.Path("feat")
-	want := "pwd=" + path + "\ndir=" + g.Dir + " path=" + path + " branch=feat base=main\n"
+	path := g.Path("feat/x")
+	want := "pwd=" + path + "\ndir=" + g.Dir + " root=" + g.Root + " name=feat/x path=" + path + " branch=feat/x base=main\n"
 	if out != want {
 		t.Errorf("hook output:\n%s\nwant:\n%s", out, want)
 	}

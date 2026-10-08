@@ -310,7 +310,7 @@ func (m model) updateCreate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				selectPath: g.Path(name),
 			}
 			if script := postCreateScript(g.Dir); err == nil && script != "" {
-				msg.postCreate = newPostCreateHook(script, g, g.Path(name), name, base)
+				msg.postCreate = newPostCreateHook(script, g, name, name, base)
 			}
 			return msg
 		}
