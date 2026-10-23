@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -88,7 +89,12 @@ func (m model) modalView() string {
 		return style.Render(body)
 
 	case modeDelete:
-		branch := m.target.Branch
+		style = style.BorderForeground(colorDanger)
+		if len(m.deleting) > 1 {
+			return m.deleteManyView(style, inner, hint("y", "delete all", "n/esc", "cancel"))
+		}
+		wt := m.deleting[0]
+		branch := wt.Branch
 		if branch == "" {
 			branch = "none (detached HEAD)"
 		}
@@ -97,19 +103,24 @@ func (m model) modalView() string {
 			"",
 			"This permanently removes:",
 			"",
-			"  " + mutedStyle.Render("directory  ") + labelStyle.Render(ansi.Truncate(m.shortPath(m.target.Path), inner-13, "…")),
+			"  " + mutedStyle.Render("directory  ") + labelStyle.Render(ansi.Truncate(m.shortPath(wt.Path), inner-13, "…")),
 			"  " + mutedStyle.Render("branch     ") + labelStyle.Render(branch),
 			"",
 		}
-		if m.warning != "" {
-			lines = append(lines, warnStyle.Width(inner).Render("Warning: "+m.warning), "")
+		if m.warnings[0] != "" {
+			lines = append(lines, warnStyle.Width(inner).Render("Warning: "+m.warnings[0]), "")
 		}
 		body := strings.Join(append(lines,
 			mutedStyle.Render("Fails safely if there are uncommitted changes."),
 			"",
 			hint("y", "delete", "n/esc", "cancel"),
 		), "\n")
-		return style.BorderForeground(colorDanger).Render(body)
+		return style.Render(body)
+
+	case modeBusy:
+		// The spinner frame is two cells wide; the activity wraps beside it.
+		activity := labelStyle.Width(inner - 2).Render(m.activity)
+		return style.Render(lipgloss.JoinHorizontal(lipgloss.Top, m.spinner.View(), activity))
 
 	case modeError:
 		msg := "Unknown error"
@@ -120,16 +131,76 @@ func (m model) modalView() string {
 				msg = strings.ToUpper(msg[:1]) + msg[1:]
 			}
 		}
+		text := lipgloss.NewStyle().Width(inner).Render(msg)
+		// Cut off what doesn't fit on screen: 8 lines are border, padding,
+		// title, hint and the blank lines between them.
+		if room := m.height - 8; m.height > 0 && lipgloss.Height(text) > room {
+			lines := strings.Split(text, "\n")[:max(room-1, 1)]
+			text = strings.Join(append(lines, "…"), "\n")
+		}
 		body := strings.Join([]string{
 			errorStyle.Bold(true).Render("Error"),
 			"",
-			lipgloss.NewStyle().Width(inner).Render(msg),
+			text,
 			"",
 			hint("enter/esc", "dismiss"),
 		}, "\n")
 		return style.BorderForeground(colorDanger).Render(body)
 	}
 	return ""
+}
+
+// deleteManyView is the delete popover for several worktrees: a list of them,
+// shortened to fit the screen, with one warning covering any that have
+// unmerged commits.
+func (m model) deleteManyView(style lipgloss.Style, inner int, hint string) string {
+	head := []string{
+		errorStyle.Bold(true).Render(fmt.Sprintf("Delete %d worktrees?", len(m.deleting))),
+		"",
+		"This permanently removes their directories and branches:",
+		"",
+	}
+	tail := []string{""}
+	anyUnmerged := false
+	for _, w := range m.warnings {
+		anyUnmerged = anyUnmerged || w != ""
+	}
+	if anyUnmerged {
+		tail = append(tail, warnStyle.Width(inner).Render(
+			"Warning: branches marked ! have commits that aren't in their upstream (or HEAD). "+
+				"That's expected if they were squash-merged; otherwise those commits will be lost."), "")
+	}
+	tail = append(tail,
+		mutedStyle.Render("Any with uncommitted changes are left alone."),
+		"",
+		hint,
+	)
+
+	nameW := 0
+	for _, wt := range m.deleting {
+		nameW = max(nameW, ansi.StringWidth(m.repo.Name(wt)))
+	}
+	nameW = min(nameW, inner/2)
+	rows := make([]string, len(m.deleting))
+	for i, wt := range m.deleting {
+		mark := "  "
+		if m.warnings[i] != "" {
+			mark = warnStyle.Render("! ")
+		}
+		row := mark + labelStyle.Render(pad(m.repo.Name(wt), nameW)) + "  " + mutedStyle.Render(wt.BranchLabel())
+		rows[i] = ansi.Truncate(row, inner, "…")
+	}
+
+	// Show as many rows as fit, replacing the rest with a count.
+	if m.height > 0 {
+		room := max(m.height-lipgloss.Height(style.Render(strings.Join(append(head, tail...), "\n"))), 1)
+		if len(rows) > room {
+			more := len(rows) - room + 1
+			rows = append(rows[:room-1], mutedStyle.Render(fmt.Sprintf("  …and %d more", more)))
+		}
+	}
+
+	return style.Render(strings.Join(append(append(head, rows...), tail...), "\n"))
 }
 
 // overlay draws modal centered on top of base, filling the whole screen.

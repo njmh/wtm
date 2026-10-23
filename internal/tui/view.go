@@ -13,17 +13,33 @@ import (
 	"github.com/njmh/wtm/internal/git"
 )
 
-var menu = []struct{ key, label string }{
-	{"C", "Create new worktree"},
-	{"D", "Delete selected worktree"},
-	{"R", "Rename selected worktree"},
-	{"P", "Prune worktrees"},
-	{"Q", "Quit"},
+type menuItem struct {
+	key, label string
+	disabled   bool
+}
+
+// menu lists the actions. While worktrees are checked, delete acts on them
+// and rename, which needs a single worktree, is disabled.
+func (m model) menu() []menuItem {
+	n := len(m.checked)
+	del, check := "Delete selected worktree", "Check worktree to delete several"
+	if n > 0 {
+		del = fmt.Sprintf("Delete %d checked %s", n, plural(n, "worktree", "worktrees"))
+		check = "Check/uncheck worktree (esc unchecks all)"
+	}
+	return []menuItem{
+		{key: "C", label: "Create new worktree"},
+		{key: "D", label: del},
+		{key: "R", label: "Rename selected worktree", disabled: n > 0},
+		{key: "P", label: "Prune worktrees"},
+		{key: "Space", label: check},
+		{key: "Q", label: "Quit"},
+	}
 }
 
 // Lines of the main screen that aren't list rows: title, blank, column
-// header, blank, menu, blank, status.
-const chromeHeight = 1 + 1 + 1 + 1 + 5 + 1 + 1
+// header, blank, the six menu items, blank, status.
+const chromeHeight = 1 + 1 + 1 + 1 + 6 + 1 + 1
 
 // listHeight is how many worktree rows fit on screen.
 func (m model) listHeight() int {
@@ -64,15 +80,16 @@ func (m model) mainView() string {
 	b.WriteString(m.listView())
 
 	b.WriteString("\n")
-	for _, item := range menu {
-		b.WriteString("  " + keyStyle.Render(item.key) + "  " + item.label + "\n")
+	for _, item := range m.menu() {
+		key, label := keyStyle.Render(pad(item.key, 5)), item.label
+		if item.disabled {
+			key, label = dimStyle.Render(pad(item.key, 5)), dimStyle.Render(label)
+		}
+		b.WriteString("  " + key + "  " + label + "\n")
 	}
 
 	b.WriteString("\n ")
-	switch {
-	case m.busy:
-		b.WriteString(busyStyle.Render(m.status))
-	case m.status != "":
+	if m.status != "" {
 		b.WriteString(okStyle.Render(m.status))
 	}
 
@@ -95,12 +112,8 @@ func (m model) listView() string {
 	}
 	nameW, branchW = min(nameW, 40), min(branchW, 40)
 
-	cell := func(s string, w int) string {
-		s = ansi.Truncate(s, w, "…")
-		return s + strings.Repeat(" ", w-ansi.StringWidth(s))
-	}
-
-	header := "  " + cell("WORKTREE", nameW) + "  " + cell("BRANCH", branchW) + "  HEAD"
+	// Rows start with the cursor and a checkbox: "▸ [x] ".
+	header := "      " + pad("WORKTREE", nameW) + "  " + pad("BRANCH", branchW) + "  HEAD"
 	if len(m.worktrees) > m.listHeight() {
 		header += fmt.Sprintf("   (%d/%d)", m.cursor+1, len(m.worktrees))
 	}
@@ -114,18 +127,31 @@ func (m model) listView() string {
 	end := min(m.offset+m.listHeight(), len(m.worktrees))
 	for i := m.offset; i < end; i++ {
 		wt := m.worktrees[i]
-		row := cell(names[i], nameW) + "  " + cell(wt.BranchLabel(), branchW) + "  " + cell(wt.ShortHead(), 7)
+		row := pad(names[i], nameW) + "  " + pad(wt.BranchLabel(), branchW) + "  " + pad(wt.ShortHead(), 7)
 		tags := wt.Tags()
 
+		// The main worktree can't be deleted, so it gets no checkbox.
+		box := "    "
+		if m.checked[wt.Path] {
+			box = "[x] "
+		} else if m.repo.CheckChangeable(wt, "delete") == nil {
+			box = "[ ] "
+		}
+
 		if i == m.cursor {
-			line := "▸ " + row
+			line := "▸ " + box + row
 			if len(tags) > 0 {
 				line += "  " + strings.Join(tags, " ")
 			}
 			b.WriteString(selectedStyle.Width(max(m.width, 1)).Render(ansi.Truncate(line, m.width, "…")) + "\n")
 			continue
 		}
-		line := "  " + row
+		if m.checked[wt.Path] {
+			box = keyStyle.Render(box)
+		} else {
+			box = mutedStyle.Render(box)
+		}
+		line := "  " + box + row
 		if len(tags) > 0 {
 			styled := make([]string, len(tags))
 			for j, t := range tags {
@@ -136,6 +162,12 @@ func (m model) listView() string {
 		b.WriteString(line + "\n")
 	}
 	return b.String()
+}
+
+// pad truncates or pads s to exactly w cells.
+func pad(s string, w int) string {
+	s = ansi.Truncate(s, w, "…")
+	return s + strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
 }
 
 // shortPath shows paths inside the working directory as ./name and

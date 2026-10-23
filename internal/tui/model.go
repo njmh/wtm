@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
@@ -18,6 +19,9 @@ const (
 	modeDelete
 	modeRename
 	modeError
+	// modeBusy shows a popover while an operation runs and ignores keys, so
+	// nothing else can start until it has finished.
+	modeBusy
 )
 
 type (
@@ -38,6 +42,12 @@ type (
 		status string
 		err    error
 	}
+	// deleteStepMsg is the result of deleting m.deleting[i]. Worktrees are
+	// deleted one at a time so the busy popover can show progress.
+	deleteStepMsg struct {
+		i   int
+		err error
+	}
 )
 
 type model struct {
@@ -49,8 +59,12 @@ type model struct {
 	height    int
 
 	mode    mode
-	target  git.Worktree // the worktree being deleted or renamed
-	warning string       // shown in the delete popover, e.g. unmerged commits
+	target  git.Worktree    // the worktree being renamed
+	checked map[string]bool // paths of the worktrees checked for deleting together
+
+	deleting   []git.Worktree // the worktrees in the delete popover, then being deleted
+	warnings   []string       // UnmergedWarning for each of deleting
+	deleteErrs []error        // the result of deleting each of deleting
 
 	nameInput   textinput.Model
 	baseInput   textinput.Model
@@ -58,8 +72,9 @@ type model struct {
 	formErr     string // inline validation message in the create/rename popovers
 
 	err        error
-	status     string
-	busy       bool
+	status     string // the last operation's result, shown under the menu
+	activity   string // what's running, shown in the busy popover
+	spinner    spinner.Model
 	selectPath string
 }
 
@@ -72,9 +87,11 @@ func Run(repo git.Repo) error {
 func newModel(g git.Repo) model {
 	return model{
 		repo:        g,
+		checked:     map[string]bool{},
 		nameInput:   newInput("feature-x"),
 		baseInput:   newInput("main"),
 		renameInput: newInput("new-name"),
+		spinner:     spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(keyStyle)),
 	}
 }
 
@@ -105,9 +122,36 @@ func (m model) selected() (git.Worktree, bool) {
 	return m.worktrees[m.cursor], true
 }
 
+// checkedWorktrees returns the checked worktrees in list order.
+func (m model) checkedWorktrees() []git.Worktree {
+	var list []git.Worktree
+	for _, wt := range m.worktrees {
+		if m.checked[wt.Path] {
+			list = append(list, wt)
+		}
+	}
+	return list
+}
+
 func (m *model) showError(err error) {
 	m.err = err
 	m.mode = modeError
+}
+
+// startBusy shows activity in the busy popover and returns a command that
+// runs op and animates the spinner. Keys are ignored until endBusy.
+func (m *model) startBusy(activity string, op tea.Cmd) tea.Cmd {
+	m.mode = modeBusy
+	m.activity = activity
+	m.status = ""
+	return tea.Batch(op, m.spinner.Tick)
+}
+
+// endBusy closes the busy popover, unless an error has already replaced it.
+func (m *model) endBusy() {
+	if m.mode == modeBusy {
+		m.mode = modeList
+	}
 }
 
 // clampScroll keeps the cursor in range and visible.

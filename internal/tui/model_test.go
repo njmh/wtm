@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -30,6 +32,8 @@ func key(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyDown}
 	case "up":
 		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
 	r := []rune(s)[0]
 	return tea.KeyPressMsg{Code: r, Text: s}
@@ -55,20 +59,50 @@ func typeText(m model, s string) model {
 }
 
 // settle runs a git operation command and the list reload that follows it.
+// Spinner ticks are dropped, as the animation would never settle.
 func settle(t *testing.T, m model, cmd tea.Cmd) model {
 	t.Helper()
-	for cmd != nil {
+	queue := []tea.Cmd{cmd}
+	for len(queue) > 0 {
+		cmd, queue = queue[0], queue[1:]
+		if cmd == nil {
+			continue
+		}
 		msg := cmd()
-		switch msg.(type) {
-		case opDoneMsg, worktreesMsg:
+		switch msg := msg.(type) {
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+			continue
+		case spinner.TickMsg:
+			continue
+		case opDoneMsg, worktreesMsg, deleteStepMsg:
 		default:
 			t.Fatalf("unexpected message %T", msg)
 		}
-		var next tea.Model
-		next, cmd = m.Update(msg)
+		next, cmd := m.Update(msg)
 		m = next.(model)
+		queue = append(queue, cmd)
 	}
 	return m
+}
+
+// result runs an operation command and returns its result, without the
+// spinner tick that startBusy batches with it.
+func result(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("operation was not started with startBusy")
+	}
+	for _, c := range batch {
+		if msg := c(); msg != nil {
+			if _, tick := msg.(spinner.TickMsg); !tick {
+				return msg
+			}
+		}
+	}
+	t.Fatal("no operation in batch")
+	return nil
 }
 
 func startModel(t *testing.T) model {
@@ -199,7 +233,7 @@ func TestErrorsShowInModal(t *testing.T) {
 	// An empty name is caught inline without running git.
 	m, _ = press(m, "enter", "c")
 	m, _ = press(m, "enter")
-	if m.busy || m.mode != modeCreate || !strings.Contains(screen(m), "Enter a name") {
+	if m.mode != modeCreate || !strings.Contains(screen(m), "Enter a name") {
 		t.Fatal("empty name was not rejected inline")
 	}
 }
@@ -207,11 +241,18 @@ func TestErrorsShowInModal(t *testing.T) {
 func TestPruneKey(t *testing.T) {
 	m := startModel(t)
 	m, cmd := press(m, "p")
-	if !m.busy {
-		t.Fatal("not busy while pruning")
+	if m.mode != modeBusy || !strings.Contains(screen(m), "Pruning worktrees…") {
+		t.Fatalf("no busy popover while pruning:\n%s", screen(m))
+	}
+	checkFits(t, m)
+	// Other actions are blocked until the operation finishes.
+	for _, k := range []string{"c", "d", "r", "p", "q", "esc"} {
+		if m, cmd := press(m, k); m.mode != modeBusy || cmd != nil {
+			t.Fatalf("%s while busy: mode = %v, cmd = %v", k, m.mode, cmd)
+		}
 	}
 	m = settle(t, m, cmd)
-	if m.busy || !strings.Contains(screen(m), "Nothing to prune") {
+	if m.mode != modeList || !strings.Contains(screen(m), "Nothing to prune") {
 		t.Fatalf("status = %q", m.status)
 	}
 }
@@ -245,6 +286,143 @@ func TestNotARepoShowsError(t *testing.T) {
 	m = settle(t, next.(model), m.Init())
 	if m.mode != modeError || !strings.Contains(screen(m), "not a git repository") {
 		t.Fatalf("screen:\n%s", screen(m))
+	}
+	checkFits(t, m)
+}
+
+// selectName moves the cursor to the worktree called name.
+func selectName(t *testing.T, m model, name string) model {
+	t.Helper()
+	for i, wt := range m.worktrees {
+		if m.repo.Name(wt) == name {
+			m.cursor = i
+			return m
+		}
+	}
+	t.Fatalf("no worktree %q", name)
+	return m
+}
+
+func TestCheckAndDeleteSeveral(t *testing.T) {
+	m := startModel(t)
+	for _, name := range []string{"a", "b", "c"} {
+		if err := m.repo.Create(name, "main"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = settle(t, m, m.loadWorktrees())
+
+	// The bare repository has no checkbox and can't be checked.
+	m, _ = press(m, "space")
+	if len(m.checked) != 0 {
+		t.Fatal("checked the bare repository")
+	}
+	m, _ = press(m, "esc") // nothing to clear; stays on the list
+	if m.mode != modeList {
+		t.Fatalf("mode = %v", m.mode)
+	}
+
+	// Space toggles the selected worktree.
+	m = selectName(t, m, "a")
+	m, _ = press(m, "space")
+	m = selectName(t, m, "c")
+	m, _ = press(m, "space", "space", "space")
+	m = selectName(t, m, "b")
+	if len(m.checked) != 2 || !strings.Contains(screen(m), "[x] a") || !strings.Contains(screen(m), "[ ] b") {
+		t.Fatalf("checked = %v, screen:\n%s", m.checked, screen(m))
+	}
+	if !strings.Contains(screen(m), "Delete 2 checked worktrees") {
+		t.Errorf("menu doesn't offer to delete the checked worktrees:\n%s", screen(m))
+	}
+	checkFits(t, m)
+
+	// Rename needs a single worktree, so it's blocked while any are checked.
+	if m, _ := press(m, "r"); m.mode != modeList {
+		t.Fatalf("rename with worktrees checked: mode = %v", m.mode)
+	}
+
+	// Delete acts on the checked worktrees, not the selected one. One has
+	// unmerged commits and the other uncommitted changes.
+	a := m.checkedWorktrees()[0]
+	gittest.Run(t, a.Path, "git", "commit", "-q", "--allow-empty", "-m", "work")
+	c := m.checkedWorktrees()[1]
+	gittest.WriteFile(t, c.Path+"/dirty.txt", "x\n")
+	m, _ = press(m, "d")
+	s := screen(m)
+	if m.mode != modeDelete || !strings.Contains(s, "Delete 2 worktrees?") || !strings.Contains(s, "! a") || !strings.Contains(s, "  c  c") || strings.Contains(s, "b  b") {
+		t.Fatalf("mode = %v, screen:\n%s", m.mode, s)
+	}
+	if !strings.Contains(s, "branches marked ! have commits") {
+		t.Errorf("no unmerged warning:\n%s", s)
+	}
+	checkFits(t, m)
+
+	// They're deleted one at a time, showing progress.
+	m, cmd := press(m, "y")
+	if !strings.Contains(screen(m), "Deleting a… (1 of 2)") {
+		t.Errorf("no progress:\n%s", screen(m))
+	}
+	next, cmd := m.Update(result(t, cmd))
+	m = next.(model)
+	if m.mode != modeBusy || !strings.Contains(screen(m), "Deleting c… (2 of 2)") {
+		t.Errorf("mode = %v, screen:\n%s", m.mode, screen(m))
+	}
+	m = settle(t, m, cmd)
+
+	// The dirty one fails, is reported and stays checked.
+	if m.mode != modeError || !strings.Contains(screen(m), "Deleted 1 of 2 worktrees. This one wasn't:") || !strings.Contains(screen(m), "• c: ") {
+		t.Fatalf("mode = %v, screen:\n%s", m.mode, screen(m))
+	}
+	checkFits(t, m)
+	m, _ = press(m, "esc")
+	if len(m.worktrees) != 3 || len(m.checked) != 1 || !m.checked[c.Path] {
+		t.Fatalf("worktrees = %d, checked = %v", len(m.worktrees), m.checked)
+	}
+
+	// Esc unchecks everything, and rename works again.
+	m, _ = press(m, "esc")
+	if len(m.checked) != 0 || strings.Contains(screen(m), "[x]") {
+		t.Fatalf("esc left %v checked", m.checked)
+	}
+	if m, _ := press(m, "r"); m.mode != modeRename {
+		t.Fatalf("rename after unchecking: mode = %v", m.mode)
+	}
+
+	// Deleting several that all succeed reports how many.
+	gittest.Run(t, c.Path, "git", "clean", "-qf")
+	m = selectName(t, m, "b")
+	m, _ = press(m, "space")
+	m = selectName(t, m, "c")
+	m, _ = press(m, "space", "d")
+	m, cmd = press(m, "y")
+	m = settle(t, m, cmd)
+	if m.mode != modeList || len(m.worktrees) != 1 || len(m.checked) != 0 || !strings.Contains(screen(m), "Deleted 2 worktrees.") {
+		t.Fatalf("mode = %v, err = %v, worktrees = %d, screen:\n%s", m.mode, m.err, len(m.worktrees), screen(m))
+	}
+}
+
+func TestDeleteManyFitsScreen(t *testing.T) {
+	m := startModel(t)
+	for i := range 30 {
+		wt := git.Worktree{Path: m.repo.Dir + "/wt" + string(rune('a'+i%26)) + string(rune('a'+i/26)), Branch: "b"}
+		m.worktrees = append(m.worktrees, wt)
+		m.checked[wt.Path] = true
+	}
+	m, _ = press(m, "d")
+	if m.mode != modeDelete || !strings.Contains(screen(m), "Delete 30 worktrees?") || !strings.Contains(screen(m), "more") {
+		t.Fatalf("mode = %v, screen:\n%s", m.mode, screen(m))
+	}
+	checkFits(t, m)
+
+	// So does the error listing every failure.
+	m.deleteErrs = make([]error, len(m.deleting))
+	for i := range m.deleteErrs {
+		m.deleteErrs[i] = errors.New("it failed")
+	}
+	next, _ := m.finish(m.deleteResult())
+	m = next.(model)
+	if m.mode != modeError || !strings.Contains(screen(m), "Deleted 0 of 30") {
+		t.Fatalf("mode = %v, screen:\n%s", m.mode, screen(m))
 	}
 	checkFits(t, m)
 }

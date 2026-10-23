@@ -24,7 +24,7 @@ func TestCreateRunsPostCreateHook(t *testing.T) {
 	}
 	m = typeText(m, "feat")
 	_, cmd := press(m, "enter")
-	msg, ok := cmd().(opDoneMsg)
+	msg, ok := result(t, cmd).(opDoneMsg)
 	if !ok || msg.err != nil || msg.postCreate == nil {
 		t.Fatalf("create result = %+v", msg)
 	}
@@ -34,14 +34,14 @@ func TestCreateRunsPostCreateHook(t *testing.T) {
 
 	next, cmd := m.Update(msg)
 	m = next.(model)
-	if cmd == nil || !m.busy || !strings.Contains(m.status, "Running .wtm/post_create.sh") {
-		t.Fatalf("busy = %v, status = %q", m.busy, m.status)
+	if cmd == nil || m.mode != modeBusy || !strings.Contains(screen(m), "Running .wtm/post_create.sh") {
+		t.Fatalf("mode = %v, screen:\n%s", m.mode, screen(m))
 	}
 
 	next, _ = m.Update(postCreateDoneMsg{status: msg.status})
 	m = next.(model)
-	if m.busy || m.status != "Created worktree feat from main. Ran .wtm/post_create.sh." {
-		t.Errorf("busy = %v, status = %q", m.busy, m.status)
+	if m.mode != modeList || m.status != "Created worktree feat from main. Ran .wtm/post_create.sh." {
+		t.Errorf("mode = %v, status = %q", m.mode, m.status)
 	}
 
 	next, _ = m.Update(postCreateDoneMsg{status: msg.status, err: os.ErrInvalid})
@@ -55,7 +55,7 @@ func TestCreateRunsPostCreateHook(t *testing.T) {
 	m, _ = press(m, "esc", "c")
 	m = typeText(m, "feat")
 	_, cmd = press(m, "enter")
-	if msg := cmd().(opDoneMsg); msg.err == nil || msg.postCreate != nil {
+	if msg := result(t, cmd).(opDoneMsg); msg.err == nil || msg.postCreate != nil {
 		t.Errorf("duplicate create = %+v", msg)
 	}
 }

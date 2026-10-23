@@ -24,10 +24,16 @@ myproject/
 |------------|------------------------------------------------------------------------|
 | ↑/↓, k/j   | Move the selection                                                     |
 | C          | Create a worktree: `<worktree_path>/<name>` on new branch `<name>`, from a base branch (default `main`), then run `post_create.sh` |
-| D          | Delete the selected worktree, its directory and its branch             |
-| R          | Rename the selected worktree's directory and branch                    |
+| Space      | Check or uncheck the selected worktree, to delete several at once      |
+| Esc        | Uncheck all                                                            |
+| D          | Delete the checked worktrees, or the selected one if none are checked, with their directories and branches |
+| R          | Rename the selected worktree's directory and branch (not while any are checked) |
 | P          | `git worktree prune`                                                   |
 | Q, ctrl+c  | Quit                                                                   |
+
+While an action runs, a popover shows its progress and other keys are
+ignored until it finishes. Checked worktrees are deleted one at a time; if
+one fails the rest still go ahead, and the failures are listed afterwards.
 
 Deletion refuses (and changes nothing) when the worktree has uncommitted or
 untracked files. When the branch has commits that aren't in its upstream (or
