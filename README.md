@@ -1,9 +1,12 @@
 # wtm — Worktree Manager
 
-A terminal UI for managing git worktrees, built with
-[Bubble Tea](https://charm.land/bubbletea) and [Lip Gloss](https://charm.land/lipgloss).
+A terminal UI and command line for managing git worktrees, built with
+[Bubble Tea](https://charm.land/bubbletea), [Lip Gloss](https://charm.land/lipgloss)
+and [Cobra](https://cobra.dev).
 
-Run `wtm` from a directory inside a git repository. By default new worktrees
+Run `wtm` from a directory inside a git repository to open the worktree
+manager, or `wtm <command>` to do the same from the shell or a script (see
+[Command line](#command-line)). By default new worktrees
 are created directly inside the current directory (see
 [Configuration](#configuration)), so it's meant for a "container" layout:
 
@@ -29,6 +32,37 @@ myproject/
 Deletion is safe: it refuses (and changes nothing) when the worktree has
 uncommitted or untracked files, or when the branch has commits not merged into
 its upstream (or `HEAD` if it has none). Every git error is shown in a dialog.
+
+## Command line
+
+Every action in the TUI is also a command:
+
+| Command                                      | Alias | Does                                                         |
+|----------------------------------------------|-------|--------------------------------------------------------------|
+| `wtm list [--json]`                          | `ls`  | List the worktrees, as a table or as JSON                    |
+| `wtm create <name> [-b <base>] [--no-hook]`  | `new` | Create a worktree on new branch `<name>` from `<base>` (default `main`), then run `post_create.sh` unless `--no-hook` |
+| `wtm delete <worktree> [-y]`                 | `rm`  | Delete the worktree, its directory and its branch            |
+| `wtm rename <worktree> <new-name>`           | `mv`  | Rename the worktree's directory and branch                   |
+| `wtm prune`                                  |       | `git worktree prune`                                         |
+
+`<worktree>` is a name as shown by `wtm list`, a path, or a branch name. The
+same safety checks apply as in the TUI. `delete` asks for confirmation unless
+`-y`/`--yes` is given, and in a script (no terminal on stdin) it refuses
+without `--yes`. Errors go to stderr and exit with status 1.
+
+`wtm help`, `wtm --help` and `wtm <command> --help` show usage, and
+`wtm --version` prints the version.
+
+### Shell completion
+
+`wtm completion <bash|zsh|fish|powershell>` prints a completion script that
+completes commands, worktree names and `--base` branches. For example, for zsh:
+
+```sh
+wtm completion zsh > "${fpath[1]}/_wtm"
+```
+
+Run `wtm completion <shell> --help` for each shell's setup.
 
 ## Configuration
 
@@ -57,8 +91,8 @@ into `worktree_path`. Unknown options or invalid TOML stop wtm with an error.
 ### `.wtm/post_create.sh`
 
 Runs with `bash` after each successful create, so it doesn't need to be
-executable. wtm hands over the terminal while it runs, so you see its output
-and it can start interactive programs. It runs inside the new worktree with:
+executable. It's connected to the terminal while it runs, from the TUI or
+`wtm create`, so you see its output and it can start interactive programs. It runs inside the new worktree with:
 
 | Variable            | Value                                                    |
 |---------------------|----------------------------------------------------------|
@@ -75,8 +109,8 @@ cp "$WTM_DIR/.env" .env
 npm install
 ```
 
-If the script exits non-zero, wtm waits for Enter so you can read its output,
-then shows an error. The worktree is kept.
+If the script exits non-zero the worktree is kept and wtm reports an error.
+In the TUI, wtm first waits for Enter so you can read the script's output.
 
 ## Install
 
@@ -92,6 +126,6 @@ go test ./...
 ```
 
 `main.go` is the entry point; the code lives in packages under `internal/`
-(`git`, `config`, `hook` and `tui`).
+(`cli`, `git`, `config`, `hook` and `tui`).
 
 Requires Go 1.27+ and git on `PATH`.
