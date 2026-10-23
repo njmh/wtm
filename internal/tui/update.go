@@ -50,7 +50,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.busy = true
 			m.status = "Running " + config.PostCreateName + "…"
 			status := msg.status
-			return m, tea.Batch(m.loadWorktrees(), tea.Exec(msg.postCreate, func(err error) tea.Msg {
+			return m, tea.Batch(m.loadWorktrees(), tea.Exec(&pauseOnFailure{PostCreate: msg.postCreate}, func(err error) tea.Msg {
 				return postCreateDoneMsg{status: status, err: err}
 			}))
 		}
@@ -179,12 +179,8 @@ func (m *model) actionable(verb string) (git.Worktree, bool) {
 	if !ok {
 		return wt, false
 	}
-	if wt.Main {
-		kind := "main worktree"
-		if wt.Bare {
-			kind = "bare repository"
-		}
-		m.showError(fmt.Errorf("the %s (%s) can't be %sd", kind, m.repo.Name(wt), verb))
+	if err := m.repo.CheckChangeable(wt, verb); err != nil {
+		m.showError(err)
 		return wt, false
 	}
 	return wt, true

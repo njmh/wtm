@@ -91,7 +91,7 @@ func (m model) listView() string {
 	for i, wt := range m.worktrees {
 		names[i] = m.repo.Name(wt)
 		nameW = max(nameW, ansi.StringWidth(names[i]))
-		branchW = max(branchW, ansi.StringWidth(branchLabel(wt)))
+		branchW = max(branchW, ansi.StringWidth(wt.BranchLabel()))
 	}
 	nameW, branchW = min(nameW, 40), min(branchW, 40)
 
@@ -114,12 +114,8 @@ func (m model) listView() string {
 	end := min(m.offset+m.listHeight(), len(m.worktrees))
 	for i := m.offset; i < end; i++ {
 		wt := m.worktrees[i]
-		head := wt.Head
-		if len(head) > 7 {
-			head = head[:7]
-		}
-		row := cell(names[i], nameW) + "  " + cell(branchLabel(wt), branchW) + "  " + cell(head, 7)
-		tags := tagsOf(wt)
+		row := cell(names[i], nameW) + "  " + cell(wt.BranchLabel(), branchW) + "  " + cell(wt.ShortHead(), 7)
+		tags := wt.Tags()
 
 		if i == m.cursor {
 			line := "▸ " + row
@@ -156,34 +152,6 @@ func (m model) shortPath(path string) string {
 		}
 	}
 	return path
-}
-
-func branchLabel(wt git.Worktree) string {
-	switch {
-	case wt.Branch != "":
-		return wt.Branch
-	case wt.Bare:
-		return "—"
-	case wt.Detached:
-		return "(detached)"
-	}
-	return ""
-}
-
-func tagsOf(wt git.Worktree) []string {
-	var tags []string
-	if wt.Bare {
-		tags = append(tags, "bare")
-	} else if wt.Main {
-		tags = append(tags, "main")
-	}
-	if wt.Locked {
-		tags = append(tags, "locked")
-	}
-	if wt.Prunable {
-		tags = append(tags, "prunable")
-	}
-	return tags
 }
 
 func tagStyle(tag string) lipgloss.Style {

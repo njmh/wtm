@@ -24,20 +24,19 @@ echo "dir=$WTM_DIR root=$WTM_WORKTREE_ROOT name=$WTM_WORKTREE_NAME path=$WTM_WOR
 	path := filepath.Join(root, "feat", "x")
 	gittest.WriteFile(t, filepath.Join(path, "README"), "")
 
-	run := func(branch, stdin string) (string, error) {
+	run := func(branch string) (string, error) {
 		h := NewPostCreate(script, Env{Dir: dir, Root: root, Name: "feat/x", Path: path, Branch: branch, Base: "main"})
 		if h.Dir() != path {
 			t.Errorf("hook runs in %s", h.Dir())
 		}
 		var out bytes.Buffer
-		h.SetStdin(strings.NewReader(stdin))
 		h.SetStdout(&out)
 		h.SetStderr(&out)
 		err := h.Run()
 		return out.String(), err
 	}
 
-	out, err := run("feat/x", "")
+	out, err := run("feat/x")
 	if err != nil {
 		t.Fatalf("hook failed: %v\n%s", err, out)
 	}
@@ -46,9 +45,8 @@ echo "dir=$WTM_DIR root=$WTM_WORKTREE_ROOT name=$WTM_WORKTREE_NAME path=$WTM_WOR
 		t.Errorf("hook output:\n%s\nwant:\n%s", out, want)
 	}
 
-	// A failing script waits for Enter so its output can be read.
-	out, err = run("fail", "x\n")
-	if err == nil || !strings.Contains(out, "post_create.sh failed (exit status 3). Press Enter") {
+	out, err = run("fail")
+	if err == nil || err.Error() != "exit status 3" || !strings.Contains(out, "branch=fail") {
 		t.Errorf("err = %v, output:\n%s", err, out)
 	}
 }

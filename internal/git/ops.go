@@ -25,6 +25,20 @@ func (g Repo) validateName(name string) error {
 	return nil
 }
 
+// CheckChangeable returns an error explaining why wt can't be deleted or
+// renamed (verb is "delete" or "rename"), or nil if it can. Only the main
+// worktree or bare repository can't.
+func (g Repo) CheckChangeable(wt Worktree, verb string) error {
+	if !wt.Main {
+		return nil
+	}
+	kind := "main worktree"
+	if wt.Bare {
+		kind = "bare repository"
+	}
+	return fmt.Errorf("the %s (%s) can't be %sd", kind, g.Name(wt), verb)
+}
+
 func (g Repo) branchExists(name string) bool {
 	_, err := g.run("show-ref", "--verify", "--quiet", "refs/heads/"+name)
 	return err == nil
@@ -45,8 +59,8 @@ func (g Repo) Create(name, base string) error {
 // Delete removes the worktree, its directory and its branch. It refuses to
 // discard uncommitted changes or unmerged commits; git's error is returned.
 func (g Repo) Delete(wt Worktree) error {
-	if wt.Main {
-		return errors.New("the main worktree can't be deleted")
+	if err := g.CheckChangeable(wt, "delete"); err != nil {
+		return err
 	}
 	if wt.Branch != "" {
 		if err := g.checkMerged(wt.Branch); err != nil {
@@ -89,8 +103,8 @@ func (g Repo) checkMerged(branch string) error {
 
 // Rename moves the worktree to Root/newName and renames its branch to newName.
 func (g Repo) Rename(wt Worktree, newName string) error {
-	if wt.Main {
-		return errors.New("the main worktree can't be renamed")
+	if err := g.CheckChangeable(wt, "rename"); err != nil {
+		return err
 	}
 	if err := g.validateName(newName); err != nil {
 		return err

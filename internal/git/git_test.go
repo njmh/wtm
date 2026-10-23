@@ -328,3 +328,61 @@ func TestWorktreePath(t *testing.T) {
 		t.Error("rename didn't move the worktree into the worktree path")
 	}
 }
+
+func TestFind(t *testing.T) {
+	g := newContainer(t)
+	g.Root = filepath.Join(g.Dir, "trees")
+	if err := g.Create("feature/a", "main"); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, g.Dir, "git", "worktree", "add", "-q", "-b", "outside", "./old", "main")
+
+	for name, wantPath := range map[string]string{
+		"feature/a":                             filepath.Join(g.Dir, "trees", "feature", "a"),
+		"feature/a/":                            filepath.Join(g.Dir, "trees", "feature", "a"),
+		"trees/feature/a":                       filepath.Join(g.Dir, "trees", "feature", "a"),
+		filepath.Join(g.Dir, "trees/feature/a"): filepath.Join(g.Dir, "trees", "feature", "a"),
+		"./old":                                 filepath.Join(g.Dir, "old"),
+		"old/":                                  filepath.Join(g.Dir, "old"),
+		"outside":                               filepath.Join(g.Dir, "old"),
+		"./.bare":                               filepath.Join(g.Dir, ".bare"),
+	} {
+		wt, err := g.Find(name)
+		if err != nil {
+			t.Errorf("Find(%q): %v", name, err)
+		} else if wt.Path != wantPath {
+			t.Errorf("Find(%q) = %s, want %s", name, wt.Path, wantPath)
+		}
+	}
+	if _, err := g.Find("nope"); err == nil || !strings.Contains(err.Error(), `no worktree named "nope"`) {
+		t.Errorf("Find(nope): err = %v", err)
+	}
+}
+
+func TestBranches(t *testing.T) {
+	g := newContainer(t)
+	if err := g.Create("feat", "main"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := g.Branches()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "feat main" {
+		t.Errorf("branches = %q", got)
+	}
+}
+
+func TestCheckChangeable(t *testing.T) {
+	g := newContainer(t)
+	if err := g.Create("feat", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.CheckChangeable(find(t, g, "feat"), "delete"); err != nil {
+		t.Errorf("feat: %v", err)
+	}
+	err := g.CheckChangeable(find(t, g, ".bare"), "rename")
+	if err == nil || err.Error() != "the bare repository (.bare) can't be renamed" {
+		t.Errorf("bare: err = %v", err)
+	}
+}

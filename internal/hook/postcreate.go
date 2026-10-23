@@ -2,12 +2,9 @@
 package hook
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
-
-	"github.com/njmh/wtm/internal/config"
 )
 
 // Env describes the new worktree to the script, as WTM_* variables.
@@ -21,9 +18,9 @@ type Env struct {
 }
 
 // PostCreate runs .wtm/post_create.sh with bash inside a new worktree. It
-// implements tea.ExecCommand, so it can take over the terminal (see
-// tea.Exec): the script's output is shown as it runs and it can start
-// interactive programs.
+// implements tea.ExecCommand, so the TUI can hand it the terminal (see
+// tea.Exec); the CLI connects it to its own stdin and stdout. Either way the
+// script's output is shown as it runs and it can start interactive programs.
 type PostCreate struct {
 	cmd *exec.Cmd
 }
@@ -50,25 +47,7 @@ func (h *PostCreate) SetStdin(r io.Reader)  { h.cmd.Stdin = r }
 func (h *PostCreate) SetStdout(w io.Writer) { h.cmd.Stdout = w }
 func (h *PostCreate) SetStderr(w io.Writer) { h.cmd.Stderr = w }
 
-// Run runs the script. When it fails, its output is still on screen, so wait
-// for Enter before handing the terminal back to wtm.
+// Run runs the script and waits for it to finish.
 func (h *PostCreate) Run() error {
-	err := h.cmd.Run()
-	if err != nil {
-		out := h.cmd.Stdout
-		if out == nil {
-			out = os.Stdout
-		}
-		fmt.Fprintf(out, "\nwtm: %s failed (%v). Press Enter to return to wtm.", config.PostCreateName, err)
-		if h.cmd.Stdin != nil {
-			buf := make([]byte, 1)
-			for {
-				n, rerr := h.cmd.Stdin.Read(buf)
-				if rerr != nil || (n == 1 && (buf[0] == '\n' || buf[0] == '\r')) {
-					break
-				}
-			}
-		}
-	}
-	return err
+	return h.cmd.Run()
 }

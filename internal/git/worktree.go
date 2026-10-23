@@ -1,6 +1,10 @@
 package git
 
-import "strings"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // Worktree is a single entry from `git worktree list --porcelain`.
 type Worktree struct {
@@ -62,4 +66,84 @@ func parseWorktrees(out string) []Worktree {
 		list[0].Main = true
 	}
 	return list
+}
+
+// ShortHead is the first seven characters of the commit hash.
+func (wt Worktree) ShortHead() string {
+	if len(wt.Head) > 7 {
+		return wt.Head[:7]
+	}
+	return wt.Head
+}
+
+// BranchLabel is the branch to show for the worktree, with placeholders for
+// bare repositories and detached worktrees.
+func (wt Worktree) BranchLabel() string {
+	switch {
+	case wt.Branch != "":
+		return wt.Branch
+	case wt.Bare:
+		return "—"
+	case wt.Detached:
+		return "(detached)"
+	}
+	return ""
+}
+
+// Tags are short labels for the worktree's state: bare or main, locked and
+// prunable.
+func (wt Worktree) Tags() []string {
+	var tags []string
+	if wt.Bare {
+		tags = append(tags, "bare")
+	} else if wt.Main {
+		tags = append(tags, "main")
+	}
+	if wt.Locked {
+		tags = append(tags, "locked")
+	}
+	if wt.Prunable {
+		tags = append(tags, "prunable")
+	}
+	return tags
+}
+
+// Find returns the worktree called name. name can be the worktree's Name, its
+// path (absolute or relative to Dir) or its branch.
+func (g Repo) Find(name string) (Worktree, error) {
+	list, err := g.List()
+	if err != nil {
+		return Worktree{}, err
+	}
+	// Shell completion of a directory adds a trailing slash.
+	trimmed := strings.TrimSuffix(name, "/")
+	for _, wt := range list {
+		if g.Name(wt) == trimmed {
+			return wt, nil
+		}
+	}
+	path := name
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(g.Dir, path)
+	}
+	for _, wt := range list {
+		if wt.Path == filepath.Clean(path) {
+			return wt, nil
+		}
+	}
+	for _, wt := range list {
+		if wt.Branch != "" && wt.Branch == name {
+			return wt, nil
+		}
+	}
+	return Worktree{}, fmt.Errorf("no worktree named %q", name)
+}
+
+// Branches returns the names of the repository's local branches.
+func (g Repo) Branches() ([]string, error) {
+	out, err := g.run("for-each-ref", "--format=%(refname:short)", "refs/heads")
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
 }
