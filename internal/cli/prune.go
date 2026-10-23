@@ -12,7 +12,8 @@ func newPruneCmd() *cobra.Command {
 		Short: "Remove stale worktree entries",
 		Long: `Remove git's records of worktrees whose directory no longer exists (git
 worktree prune). Their branches are kept.`,
-		Args: exactArgs(),
+		Args:              exactArgs(),
+		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := loadRepo()
 			if err != nil {

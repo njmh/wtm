@@ -28,7 +28,8 @@ it has no upstream).
 
 wtm asks before deleting unless --yes is given. When there's no terminal to ask
 in, such as in a script, --yes is required.`,
-		Args: exactArgs("<worktree>"),
+		Args:              exactArgs("<worktree>"),
+		ValidArgsFunction: completeWorktree,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := loadRepo()
 			if err != nil {

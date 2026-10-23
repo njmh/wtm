@@ -25,6 +25,8 @@ Names can contain slashes, e.g. feature/login.`,
 		Example: `  wtm create feature-x
   wtm create fix/login --base develop`,
 		Args: exactArgs("<name>"),
+		// The name is new, so there is nothing to complete.
+		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := loadRepo()
 			if err != nil {
@@ -63,6 +65,7 @@ Names can contain slashes, e.g. feature/login.`,
 		},
 	}
 	cmd.Flags().StringVarP(&base, "base", "b", "main", "the branch to start the new branch from")
+	_ = cmd.RegisterFlagCompletionFunc("base", completeBranch) // fails only if there's no such flag
 	cmd.Flags().BoolVar(&noHook, "no-hook", false, "don't run "+config.PostCreateName)
 	return cmd
 }

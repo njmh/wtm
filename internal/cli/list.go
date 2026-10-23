@@ -23,7 +23,8 @@ func newListCmd() *cobra.Command {
 
 Worktrees are named by their path inside worktree_path; others are shown as
 ./path. These names are what the other commands take.`,
-		Args: exactArgs(),
+		Args:              exactArgs(),
+		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := loadRepo()
 			if err != nil {

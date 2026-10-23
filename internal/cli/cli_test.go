@@ -274,3 +274,21 @@ func TestPrune(t *testing.T) {
 		t.Errorf("output = %q", out)
 	}
 }
+
+func TestCompletion(t *testing.T) {
+	dir := gittest.NewContainer(t)
+	mustRun(t, dir, "create", "feat")
+	gittest.Run(t, dir, "git", "branch", "other")
+
+	for args, want := range map[string]string{
+		"rm ":              "feat\tfeat\n:4\n",
+		"mv feat ":         ":4\n",
+		"create x --base ": "feat\nmain\nother\n:4\n",
+	} {
+		// The trailing space makes the last word "": the word being completed.
+		out := mustRun(t, dir, append([]string{"__complete"}, strings.Split(args, " ")...)...)
+		if out != want {
+			t.Errorf("complete %q:\n%s\nwant:\n%s", args, out, want)
+		}
+	}
+}

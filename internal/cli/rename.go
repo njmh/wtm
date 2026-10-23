@@ -16,7 +16,8 @@ given by name, path or branch.
 
 The worktree moves to new-name inside worktree_path, so renaming one that is
 outside worktree_path moves it in.`,
-		Args: exactArgs("<worktree>", "<new-name>"),
+		Args:              exactArgs("<worktree>", "<new-name>"),
+		ValidArgsFunction: completeWorktree,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, err := loadRepo()
 			if err != nil {
