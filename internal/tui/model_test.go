@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -55,20 +56,50 @@ func typeText(m model, s string) model {
 }
 
 // settle runs a git operation command and the list reload that follows it.
+// Spinner ticks are dropped, as the animation would never settle.
 func settle(t *testing.T, m model, cmd tea.Cmd) model {
 	t.Helper()
-	for cmd != nil {
+	queue := []tea.Cmd{cmd}
+	for len(queue) > 0 {
+		cmd, queue = queue[0], queue[1:]
+		if cmd == nil {
+			continue
+		}
 		msg := cmd()
-		switch msg.(type) {
+		switch msg := msg.(type) {
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+			continue
+		case spinner.TickMsg:
+			continue
 		case opDoneMsg, worktreesMsg:
 		default:
 			t.Fatalf("unexpected message %T", msg)
 		}
-		var next tea.Model
-		next, cmd = m.Update(msg)
+		next, cmd := m.Update(msg)
 		m = next.(model)
+		queue = append(queue, cmd)
 	}
 	return m
+}
+
+// result runs an operation command and returns its result, without the
+// spinner tick that startBusy batches with it.
+func result(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("operation was not started with startBusy")
+	}
+	for _, c := range batch {
+		if msg := c(); msg != nil {
+			if _, tick := msg.(spinner.TickMsg); !tick {
+				return msg
+			}
+		}
+	}
+	t.Fatal("no operation in batch")
+	return nil
 }
 
 func startModel(t *testing.T) model {
@@ -199,7 +230,7 @@ func TestErrorsShowInModal(t *testing.T) {
 	// An empty name is caught inline without running git.
 	m, _ = press(m, "enter", "c")
 	m, _ = press(m, "enter")
-	if m.busy || m.mode != modeCreate || !strings.Contains(screen(m), "Enter a name") {
+	if m.mode != modeCreate || !strings.Contains(screen(m), "Enter a name") {
 		t.Fatal("empty name was not rejected inline")
 	}
 }
@@ -207,11 +238,18 @@ func TestErrorsShowInModal(t *testing.T) {
 func TestPruneKey(t *testing.T) {
 	m := startModel(t)
 	m, cmd := press(m, "p")
-	if !m.busy {
-		t.Fatal("not busy while pruning")
+	if m.mode != modeBusy || !strings.Contains(screen(m), "Pruning worktrees…") {
+		t.Fatalf("no busy popover while pruning:\n%s", screen(m))
+	}
+	checkFits(t, m)
+	// Other actions are blocked until the operation finishes.
+	for _, k := range []string{"c", "d", "r", "p", "q", "esc"} {
+		if m, cmd := press(m, k); m.mode != modeBusy || cmd != nil {
+			t.Fatalf("%s while busy: mode = %v, cmd = %v", k, m.mode, cmd)
+		}
 	}
 	m = settle(t, m, cmd)
-	if m.busy || !strings.Contains(screen(m), "Nothing to prune") {
+	if m.mode != modeList || !strings.Contains(screen(m), "Nothing to prune") {
 		t.Fatalf("status = %q", m.status)
 	}
 }

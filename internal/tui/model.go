@@ -3,6 +3,7 @@
 package tui
 
 import (
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
@@ -18,6 +19,9 @@ const (
 	modeDelete
 	modeRename
 	modeError
+	// modeBusy shows a popover while an operation runs and ignores keys, so
+	// nothing else can start until it has finished.
+	modeBusy
 )
 
 type (
@@ -58,8 +62,9 @@ type model struct {
 	formErr     string // inline validation message in the create/rename popovers
 
 	err        error
-	status     string
-	busy       bool
+	status     string // the last operation's result, shown under the menu
+	activity   string // what's running, shown in the busy popover
+	spinner    spinner.Model
 	selectPath string
 }
 
@@ -75,6 +80,7 @@ func newModel(g git.Repo) model {
 		nameInput:   newInput("feature-x"),
 		baseInput:   newInput("main"),
 		renameInput: newInput("new-name"),
+		spinner:     spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(keyStyle)),
 	}
 }
 
@@ -108,6 +114,22 @@ func (m model) selected() (git.Worktree, bool) {
 func (m *model) showError(err error) {
 	m.err = err
 	m.mode = modeError
+}
+
+// startBusy shows activity in the busy popover and returns a command that
+// runs op and animates the spinner. Keys are ignored until endBusy.
+func (m *model) startBusy(activity string, op tea.Cmd) tea.Cmd {
+	m.mode = modeBusy
+	m.activity = activity
+	m.status = ""
+	return tea.Batch(op, m.spinner.Tick)
+}
+
+// endBusy closes the busy popover, unless an error has already replaced it.
+func (m *model) endBusy() {
+	if m.mode == modeBusy {
+		m.mode = modeList
+	}
 }
 
 // clampScroll keeps the cursor in range and visible.

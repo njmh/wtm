@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/njmh/wtm/internal/config"
@@ -38,7 +39,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case opDoneMsg:
-		m.busy = false
+		m.endBusy()
 		m.status = msg.status
 		m.selectPath = msg.selectPath
 		if msg.err != nil {
@@ -47,17 +48,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Reload even on failure: a partly applied operation still changes the list.
 		if msg.err == nil && msg.postCreate != nil {
-			m.busy = true
-			m.status = "Running " + config.PostCreateName + "…"
 			status := msg.status
-			return m, tea.Batch(m.loadWorktrees(), tea.Exec(&pauseOnFailure{PostCreate: msg.postCreate}, func(err error) tea.Msg {
-				return postCreateDoneMsg{status: status, err: err}
-			}))
+			return m, tea.Batch(m.loadWorktrees(), m.startBusy("Running "+config.PostCreateName+"…",
+				tea.Exec(&pauseOnFailure{PostCreate: msg.postCreate}, func(err error) tea.Msg {
+					return postCreateDoneMsg{status: status, err: err}
+				})))
 		}
 		return m, m.loadWorktrees()
 
 	case postCreateDoneMsg:
-		m.busy = false
+		m.endBusy()
 		m.status = msg.status + " Ran " + config.PostCreateName + "."
 		if msg.err != nil {
 			m.status = ""
@@ -65,11 +65,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case spinner.TickMsg:
+		// Dropping the tick when idle stops the animation until the next startBusy.
+		if m.mode != modeBusy {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
 		switch m.mode {
+		case modeBusy:
+			return m, nil
 		case modeList:
 			return m.updateList(msg)
 		case modeCreate:
@@ -119,9 +130,6 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "end", "G":
 		m.cursor = max(len(m.worktrees)-1, 0)
 	case "c", "C":
-		if m.busy {
-			return m, nil
-		}
 		m.mode = modeCreate
 		m.formErr = ""
 		m.nameInput.Reset()
@@ -130,7 +138,7 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.nameInput.Focus()
 	case "d", "D":
 		wt, ok := m.actionable("delete")
-		if !ok || m.busy {
+		if !ok {
 			return m, nil
 		}
 		m.target = wt
@@ -138,7 +146,7 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeDelete
 	case "r", "R":
 		wt, ok := m.actionable("rename")
-		if !ok || m.busy {
+		if !ok {
 			return m, nil
 		}
 		m.target = wt
@@ -154,20 +162,15 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.renameInput.CursorEnd()
 		return m, m.renameInput.Focus()
 	case "p", "P":
-		if m.busy {
-			return m, nil
-		}
-		m.busy = true
-		m.status = "Pruning worktrees…"
 		g := m.repo
-		return m, func() tea.Msg {
+		return m, m.startBusy("Pruning worktrees…", func() tea.Msg {
 			n, err := g.Prune()
 			status := "Nothing to prune."
 			if n > 0 {
 				status = fmt.Sprintf("Pruned %d stale worktree %s.", n, plural(n, "entry", "entries"))
 			}
 			return opDoneMsg{status: status, err: err}
-		}
+		})
 	}
 	m.clampScroll()
 	return m, nil
@@ -210,11 +213,8 @@ func (m model) updateCreate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if base == "" {
 			base = "main"
 		}
-		m.mode = modeList
-		m.busy = true
-		m.status = fmt.Sprintf("Creating %s from %s…", name, base)
 		g := m.repo
-		return m, func() tea.Msg {
+		return m, m.startBusy(fmt.Sprintf("Creating %s from %s…", name, base), func() tea.Msg {
 			err := g.Create(name, base)
 			msg := opDoneMsg{
 				status:     fmt.Sprintf("Created worktree %s from %s.", name, base),
@@ -232,7 +232,7 @@ func (m model) updateCreate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				})
 			}
 			return msg
-		}
+		})
 	}
 	var cmd tea.Cmd
 	if m.nameInput.Focused() {
@@ -249,14 +249,11 @@ func (m model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		wt := m.target
 		name := m.repo.Name(wt)
-		m.mode = modeList
-		m.busy = true
-		m.status = fmt.Sprintf("Deleting %s…", name)
 		g := m.repo
-		return m, func() tea.Msg {
+		return m, m.startBusy(fmt.Sprintf("Deleting %s…", name), func() tea.Msg {
 			err := g.Delete(wt)
 			return opDoneMsg{status: fmt.Sprintf("Deleted worktree %s.", name), err: err}
-		}
+		})
 	case "n", "N", "esc", "q":
 		m.mode = modeList
 	}
@@ -280,18 +277,15 @@ func (m model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.formErr = "That's already its name."
 			return m, nil
 		}
-		m.mode = modeList
-		m.busy = true
-		m.status = fmt.Sprintf("Renaming %s to %s…", oldName, newName)
 		g := m.repo
-		return m, func() tea.Msg {
+		return m, m.startBusy(fmt.Sprintf("Renaming %s to %s…", oldName, newName), func() tea.Msg {
 			err := g.Rename(wt, newName)
 			return opDoneMsg{
 				status:     fmt.Sprintf("Renamed %s to %s.", oldName, newName),
 				err:        err,
 				selectPath: g.Path(newName),
 			}
-		}
+		})
 	}
 	var cmd tea.Cmd
 	m.renameInput, cmd = m.renameInput.Update(msg)

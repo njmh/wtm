@@ -17,7 +17,6 @@ var (
 			Foreground(lipgloss.Color("231")).Background(lipgloss.Color("238"))
 	keyStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	okStyle    = lipgloss.NewStyle().Foreground(colorOK)
-	busyStyle  = lipgloss.NewStyle().Foreground(colorWarn)
 	errorStyle = lipgloss.NewStyle().Foreground(colorDanger)
 	warnStyle  = lipgloss.NewStyle().Foreground(colorWarn)
 	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))

@@ -111,6 +111,11 @@ func (m model) modalView() string {
 		), "\n")
 		return style.BorderForeground(colorDanger).Render(body)
 
+	case modeBusy:
+		// The spinner frame is two cells wide; the activity wraps beside it.
+		activity := labelStyle.Width(inner - 2).Render(m.activity)
+		return style.Render(lipgloss.JoinHorizontal(lipgloss.Top, m.spinner.View(), activity))
+
 	case modeError:
 		msg := "Unknown error"
 		if m.err != nil {

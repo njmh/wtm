@@ -69,10 +69,7 @@ func (m model) mainView() string {
 	}
 
 	b.WriteString("\n ")
-	switch {
-	case m.busy:
-		b.WriteString(busyStyle.Render(m.status))
-	case m.status != "":
+	if m.status != "" {
 		b.WriteString(okStyle.Render(m.status))
 	}
 
