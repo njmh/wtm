@@ -1,49 +1,20 @@
-package main
+package git
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/njmh/wtm/internal/gittest"
 )
 
-// newContainer builds the layout wtm is meant for: a directory holding a bare
-// repository in .bare, pointed to by a .git file, with worktrees as siblings.
-func newContainer(t *testing.T) Git {
+func newContainer(t *testing.T) Repo {
 	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	origin := filepath.Join(root, "origin")
-	dir := filepath.Join(root, "container")
-
-	sh(t, root, "git", "init", "-q", "-b", "main", origin)
-	sh(t, origin, "git", "commit", "-q", "--allow-empty", "-m", "initial")
-	sh(t, root, "git", "clone", "-q", "--bare", origin, filepath.Join(dir, ".bare"))
-	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: ./.bare\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return Git{Dir: dir}
+	return Repo{Dir: gittest.NewContainer(t)}
 }
 
-func sh(t *testing.T, dir string, name string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
-		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
-	}
-	return string(out)
-}
-
-func mustList(t *testing.T, g Git) []Worktree {
+func mustList(t *testing.T, g Repo) []Worktree {
 	t.Helper()
 	list, err := g.List()
 	if err != nil {
@@ -52,7 +23,7 @@ func mustList(t *testing.T, g Git) []Worktree {
 	return list
 }
 
-func find(t *testing.T, g Git, name string) Worktree {
+func find(t *testing.T, g Repo, name string) Worktree {
 	t.Helper()
 	for _, wt := range mustList(t, g) {
 		if g.Name(wt) == name {
@@ -124,7 +95,7 @@ func TestCreate(t *testing.T) {
 	}
 
 	// Based on a branch other than main.
-	sh(t, filepath.Join(g.Dir, "feat-a"), "git", "commit", "-q", "--allow-empty", "-m", "on a")
+	gittest.Run(t, filepath.Join(g.Dir, "feat-a"), "git", "commit", "-q", "--allow-empty", "-m", "on a")
 	if err := g.Create("from-a", "feat-a"); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +142,7 @@ func TestRename(t *testing.T) {
 		t.Error("old branch still exists")
 	}
 	// The moved worktree is still a working checkout of the renamed branch.
-	if got := strings.TrimSpace(sh(t, wt.Path, "git", "branch", "--show-current")); got != "new" {
+	if got := strings.TrimSpace(gittest.Run(t, wt.Path, "git", "branch", "--show-current")); got != "new" {
 		t.Errorf("checked out branch = %q", got)
 	}
 }
@@ -197,7 +168,7 @@ func TestRenameConflicts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	sh(t, g.Dir, "git", "branch", "taken")
+	gittest.Run(t, g.Dir, "git", "branch", "taken")
 
 	a := find(t, g, "a")
 	for _, name := range []string{"b", "taken", "bad name"} {
@@ -256,8 +227,8 @@ func TestDeleteRefusesToLoseWork(t *testing.T) {
 	}
 
 	// Committed, but not merged into main.
-	sh(t, wt.Path, "git", "add", ".")
-	sh(t, wt.Path, "git", "commit", "-q", "-m", "work")
+	gittest.Run(t, wt.Path, "git", "add", ".")
+	gittest.Run(t, wt.Path, "git", "commit", "-q", "-m", "work")
 	err := g.Delete(wt)
 	if err == nil || !strings.Contains(err.Error(), "aren't merged into main") {
 		t.Fatalf("err = %v, want unmerged error", err)
@@ -309,8 +280,51 @@ func TestPruneAndDeletePrunable(t *testing.T) {
 }
 
 func TestNotARepo(t *testing.T) {
-	_, err := Git{Dir: t.TempDir()}.List()
+	_, err := Repo{Dir: t.TempDir()}.List()
 	if err == nil || !strings.Contains(err.Error(), "not a git repository") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestWorktreePath(t *testing.T) {
+	g := newContainer(t)
+	g.Root = filepath.Join(g.Dir, "trees")
+
+	// git creates the worktree path itself the first time.
+	if err := g.Create("feature/a", "main"); err != nil {
+		t.Fatal(err)
+	}
+	wt := find(t, g, "feature/a")
+	if wt.Path != filepath.Join(g.Dir, "trees", "feature", "a") {
+		t.Errorf("created at %s", wt.Path)
+	}
+	if name := g.Name(mustList(t, g)[0]); name != "./.bare" {
+		t.Errorf("bare repo outside the worktree path is named %q", name)
+	}
+
+	if err := g.Rename(wt, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(g.Dir, "trees", "feature")) {
+		t.Error("empty parent folder left behind after rename")
+	}
+	if err := g.Delete(find(t, g, "b")); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(g.Dir, "trees")) {
+		t.Error("the worktree path itself was removed")
+	}
+
+	// A worktree created outside the worktree path is moved into it by rename.
+	gittest.Run(t, g.Dir, "git", "worktree", "add", "-q", "-b", "old", "./old", "main")
+	old := find(t, g, "./old")
+	if _, ok := g.InRoot(old); ok {
+		t.Fatal("./old should be outside the worktree path")
+	}
+	if err := g.Rename(old, "old"); err != nil {
+		t.Fatal(err)
+	}
+	if find(t, g, "old").Path != filepath.Join(g.Dir, "trees", "old") || exists(filepath.Join(g.Dir, "old")) {
+		t.Error("rename didn't move the worktree into the worktree path")
 	}
 }

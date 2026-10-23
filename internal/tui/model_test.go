@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"strings"
@@ -6,7 +6,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/njmh/wtm/internal/git"
+	"github.com/njmh/wtm/internal/gittest"
 )
+
+func newContainer(t *testing.T) git.Repo {
+	t.Helper()
+	return git.Repo{Dir: gittest.NewContainer(t)}
+}
 
 func key(s string) tea.KeyPressMsg {
 	switch s {
@@ -131,7 +139,7 @@ func TestCreateRenameDeleteFlow(t *testing.T) {
 	m = typeText(m, "better")
 	m, cmd = press(m, "enter")
 	m = settle(t, m, cmd)
-	if wt, _ := m.selected(); wt.Branch != "better" || m.git.Name(wt) != "better" {
+	if wt, _ := m.selected(); wt.Branch != "better" || m.repo.Name(wt) != "better" {
 		t.Fatalf("after rename selected %+v (err %v)", wt, m.err)
 	}
 
@@ -204,7 +212,7 @@ func TestPruneKey(t *testing.T) {
 func TestScrolling(t *testing.T) {
 	m := startModel(t)
 	for i := range 30 {
-		m.worktrees = append(m.worktrees, Worktree{Path: m.git.Dir + "/wt" + string(rune('a'+i%26)) + string(rune('a'+i/26)), Branch: "b"})
+		m.worktrees = append(m.worktrees, git.Worktree{Path: m.repo.Dir + "/wt" + string(rune('a'+i%26)) + string(rune('a'+i/26)), Branch: "b"})
 	}
 	for range 30 {
 		m, _ = press(m, "down")
@@ -225,7 +233,7 @@ func TestScrolling(t *testing.T) {
 }
 
 func TestNotARepoShowsError(t *testing.T) {
-	m := newModel(Git{Dir: t.TempDir()})
+	m := newModel(git.Repo{Dir: t.TempDir()})
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
 	m = settle(t, next.(model), m.Init())
 	if m.mode != modeError || !strings.Contains(screen(m), "not a git repository") {

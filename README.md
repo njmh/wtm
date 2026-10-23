@@ -78,11 +78,20 @@ npm install
 If the script exits non-zero, wtm waits for Enter so you can read its output,
 then shows an error. The worktree is kept.
 
+## Install
+
+```sh
+go install github.com/njmh/wtm@latest
+```
+
 ## Build
 
 ```sh
 go build -o wtm .
 go test ./...
 ```
+
+`main.go` is the entry point; the code lives in packages under `internal/`
+(`git`, `config`, `hook` and `tui`).
 
 Requires Go 1.27+ and git on `PATH`.
