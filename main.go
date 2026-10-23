@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/njmh/wtm/internal/config"
 	"github.com/njmh/wtm/internal/git"
 )
 
@@ -28,13 +29,13 @@ func main() {
 		dir = resolved
 	}
 
-	cfg, err := loadConfig(dir)
+	cfg, err := config.Load(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wtm:", err)
 		os.Exit(1)
 	}
 
-	g := git.Repo{Dir: dir, Root: cfg.root(dir)}
+	g := git.Repo{Dir: dir, Root: cfg.Root(dir)}
 	if _, err := tea.NewProgram(newModel(g)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wtm:", err)
 		os.Exit(1)

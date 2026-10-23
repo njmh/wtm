@@ -1,118 +1,20 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/njmh/wtm/internal/config"
+	"github.com/njmh/wtm/internal/gittest"
 )
-
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestLoadConfig(t *testing.T) {
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfgPath := filepath.Join(dir, configDir, "config.toml")
-
-	// No .wtm directory: defaults.
-	cfg, err := loadConfig(dir)
-	if err != nil || cfg.WorktreePath != "./" || cfg.root(dir) != dir {
-		t.Fatalf("default config = %+v, root %q, err %v", cfg, cfg.root(dir), err)
-	}
-
-	// An empty file also gives the defaults.
-	writeFile(t, cfgPath, "")
-	if cfg, err := loadConfig(dir); err != nil || cfg.root(dir) != dir {
-		t.Fatalf("empty config = %+v, err %v", cfg, err)
-	}
-
-	writeFile(t, cfgPath, "# where worktrees go\nworktree_path = \"trees\"\n")
-	cfg, err = loadConfig(dir)
-	if err != nil || cfg.root(dir) != filepath.Join(dir, "trees") {
-		t.Fatalf("config = %+v, root %q, err %v", cfg, cfg.root(dir), err)
-	}
-
-	writeFile(t, cfgPath, "worktree_path = \"../sibling\"\n")
-	if cfg, _ := loadConfig(dir); cfg.root(dir) != filepath.Join(filepath.Dir(dir), "sibling") {
-		t.Errorf("root = %q", cfg.root(dir))
-	}
-
-	for content, want := range map[string]string{
-		"worktree_path = ":               "config.toml",
-		"worktree_pth = \"trees\"":       `unknown option "worktree_pth"`,
-		"worktree_path = \"\"":           "can't be empty",
-		"worktree_path = 3":              "config.toml",
-		"[section]\nworktree_path=\"x\"": "unknown option",
-	} {
-		writeFile(t, cfgPath, content)
-		if _, err := loadConfig(dir); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("config %q: err = %v, want it to mention %q", content, err, want)
-		}
-	}
-}
-
-func TestPostCreateHook(t *testing.T) {
-	g := newContainer(t)
-	g.Root = filepath.Join(g.Dir, "trees")
-	if postCreateScript(g.Dir) != "" {
-		t.Fatal("found a post_create.sh that doesn't exist")
-	}
-	script := filepath.Join(g.Dir, configDir, "post_create.sh")
-	// Not executable: it's run with bash.
-	writeFile(t, script, `echo "pwd=$(pwd)"
-echo "dir=$WTM_DIR root=$WTM_WORKTREE_ROOT name=$WTM_WORKTREE_NAME path=$WTM_WORKTREE_PATH branch=$WTM_BRANCH base=$WTM_BASE_BRANCH"
-[ "$WTM_BRANCH" != fail ] || exit 3
-`)
-	if postCreateScript(g.Dir) != script {
-		t.Fatal("post_create.sh not found")
-	}
-	if err := g.Create("feat/x", "main"); err != nil {
-		t.Fatal(err)
-	}
-
-	run := func(branch, stdin string) (string, error) {
-		h := newPostCreateHook(script, g, "feat/x", branch, "main")
-		var out bytes.Buffer
-		h.SetStdin(strings.NewReader(stdin))
-		h.SetStdout(&out)
-		h.SetStderr(&out)
-		err := h.Run()
-		return out.String(), err
-	}
-
-	out, err := run("feat/x", "")
-	if err != nil {
-		t.Fatalf("hook failed: %v\n%s", err, out)
-	}
-	path := g.Path("feat/x")
-	want := "pwd=" + path + "\ndir=" + g.Dir + " root=" + g.Root + " name=feat/x path=" + path + " branch=feat/x base=main\n"
-	if out != want {
-		t.Errorf("hook output:\n%s\nwant:\n%s", out, want)
-	}
-
-	// A failing script waits for Enter so its output can be read.
-	out, err = run("fail", "x\n")
-	if err == nil || !strings.Contains(out, "post_create.sh failed (exit status 3). Press Enter") {
-		t.Errorf("err = %v, output:\n%s", err, out)
-	}
-}
 
 func TestCreateRunsPostCreateHook(t *testing.T) {
 	m := startModel(t)
-	writeFile(t, filepath.Join(m.repo.Dir, configDir, "post_create.sh"), "true\n")
+	gittest.WriteFile(t, filepath.Join(m.repo.Dir, config.PostCreateName), "true\n")
 
 	m, _ = press(m, "c")
 	if !strings.Contains(screen(m), "Runs .wtm/post_create.sh.") {
@@ -124,8 +26,8 @@ func TestCreateRunsPostCreateHook(t *testing.T) {
 	if !ok || msg.err != nil || msg.postCreate == nil {
 		t.Fatalf("create result = %+v", msg)
 	}
-	if msg.postCreate.cmd.Dir != m.repo.Path("feat") {
-		t.Errorf("hook runs in %s", msg.postCreate.cmd.Dir)
+	if msg.postCreate.Dir() != m.repo.Path("feat") {
+		t.Errorf("hook runs in %s", msg.postCreate.Dir())
 	}
 
 	next, cmd := m.Update(msg)

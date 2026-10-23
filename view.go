@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/njmh/wtm/internal/config"
 	"github.com/njmh/wtm/internal/git"
 )
 
@@ -229,8 +230,8 @@ func (m model) createNote() string {
 	if root := m.repo.WorktreeRoot(); root != m.repo.Dir {
 		notes = append(notes, "Created in "+m.shortPath(root)+"/")
 	}
-	if postCreateScript(m.repo.Dir) != "" {
-		notes = append(notes, "runs "+filepath.Join(configDir, "post_create.sh"))
+	if config.PostCreateScript(m.repo.Dir) != "" {
+		notes = append(notes, "runs "+config.PostCreateName)
 	}
 	if len(notes) == 0 {
 		return ""

@@ -8,7 +8,9 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/njmh/wtm/internal/config"
 	"github.com/njmh/wtm/internal/git"
+	"github.com/njmh/wtm/internal/hook"
 )
 
 type mode int
@@ -33,7 +35,7 @@ type (
 		selectPath string
 		// postCreate is set after a successful create when there is a
 		// .wtm/post_create.sh to run.
-		postCreate *postCreateHook
+		postCreate *hook.PostCreate
 	}
 	postCreateDoneMsg struct {
 		status string
@@ -135,7 +137,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reload even on failure: a partly applied operation still changes the list.
 		if msg.err == nil && msg.postCreate != nil {
 			m.busy = true
-			m.status = "Running " + filepath.Join(configDir, "post_create.sh") + "…"
+			m.status = "Running " + config.PostCreateName + "…"
 			status := msg.status
 			return m, tea.Batch(m.loadWorktrees(), tea.Exec(msg.postCreate, func(err error) tea.Msg {
 				return postCreateDoneMsg{status: status, err: err}
@@ -145,10 +147,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case postCreateDoneMsg:
 		m.busy = false
-		m.status = msg.status + " Ran " + filepath.Join(configDir, "post_create.sh") + "."
+		m.status = msg.status + " Ran " + config.PostCreateName + "."
 		if msg.err != nil {
 			m.status = ""
-			m.showError(fmt.Errorf("the worktree was created, but %s failed: %w", filepath.Join(configDir, "post_create.sh"), msg.err))
+			m.showError(fmt.Errorf("the worktree was created, but %s failed: %w", config.PostCreateName, msg.err))
 		}
 		return m, nil
 
@@ -311,8 +313,15 @@ func (m model) updateCreate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				err:        err,
 				selectPath: g.Path(name),
 			}
-			if script := postCreateScript(g.Dir); err == nil && script != "" {
-				msg.postCreate = newPostCreateHook(script, g, name, name, base)
+			if script := config.PostCreateScript(g.Dir); err == nil && script != "" {
+				msg.postCreate = hook.NewPostCreate(script, hook.Env{
+					Dir:    g.Dir,
+					Root:   g.WorktreeRoot(),
+					Name:   name,
+					Path:   g.Path(name),
+					Branch: name,
+					Base:   base,
+				})
 			}
 			return msg
 		}
