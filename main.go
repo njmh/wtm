@@ -8,10 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/njmh/wtm/internal/config"
 	"github.com/njmh/wtm/internal/git"
+	"github.com/njmh/wtm/internal/tui"
 )
 
 func main() {
@@ -35,8 +34,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	g := git.Repo{Dir: dir, Root: cfg.Root(dir)}
-	if _, err := tea.NewProgram(newModel(g)).Run(); err != nil {
+	repo := git.Repo{Dir: dir, Root: cfg.Root(dir)}
+	if err := tui.Run(repo); err != nil {
 		fmt.Fprintln(os.Stderr, "wtm:", err)
 		os.Exit(1)
 	}
