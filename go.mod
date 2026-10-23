@@ -1,4 +1,4 @@
-module wtm
+module github.com/njmh/wtm
 
 go 1.27.1
 
