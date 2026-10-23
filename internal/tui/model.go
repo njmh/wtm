@@ -42,6 +42,12 @@ type (
 		status string
 		err    error
 	}
+	// deleteStepMsg is the result of deleting m.deleting[i]. Worktrees are
+	// deleted one at a time so the busy popover can show progress.
+	deleteStepMsg struct {
+		i   int
+		err error
+	}
 )
 
 type model struct {
@@ -53,8 +59,12 @@ type model struct {
 	height    int
 
 	mode    mode
-	target  git.Worktree // the worktree being deleted or renamed
-	warning string       // shown in the delete popover, e.g. unmerged commits
+	target  git.Worktree    // the worktree being renamed
+	checked map[string]bool // paths of the worktrees checked for deleting together
+
+	deleting   []git.Worktree // the worktrees in the delete popover, then being deleted
+	warnings   []string       // UnmergedWarning for each of deleting
+	deleteErrs []error        // the result of deleting each of deleting
 
 	nameInput   textinput.Model
 	baseInput   textinput.Model
@@ -77,6 +87,7 @@ func Run(repo git.Repo) error {
 func newModel(g git.Repo) model {
 	return model{
 		repo:        g,
+		checked:     map[string]bool{},
 		nameInput:   newInput("feature-x"),
 		baseInput:   newInput("main"),
 		renameInput: newInput("new-name"),
@@ -109,6 +120,17 @@ func (m model) selected() (git.Worktree, bool) {
 		return git.Worktree{}, false
 	}
 	return m.worktrees[m.cursor], true
+}
+
+// checkedWorktrees returns the checked worktrees in list order.
+func (m model) checkedWorktrees() []git.Worktree {
+	var list []git.Worktree
+	for _, wt := range m.worktrees {
+		if m.checked[wt.Path] {
+			list = append(list, wt)
+		}
+	}
+	return list
 }
 
 func (m *model) showError(err error) {

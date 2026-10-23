@@ -23,10 +23,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case worktreesMsg:
 		if msg.err != nil {
 			m.worktrees = nil
+			clear(m.checked)
 			m.showError(msg.err)
 			return m, nil
 		}
 		m.worktrees = msg.list
+		// Forget checks on worktrees that are gone, e.g. once they're deleted.
+		listed := make(map[string]bool, len(m.worktrees))
+		for _, wt := range m.worktrees {
+			listed[wt.Path] = true
+		}
+		for path := range m.checked {
+			if !listed[path] {
+				delete(m.checked, path)
+			}
+		}
 		if m.selectPath != "" {
 			for i, wt := range m.worktrees {
 				if wt.Path == m.selectPath {
@@ -39,22 +50,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case opDoneMsg:
-		m.endBusy()
-		m.status = msg.status
-		m.selectPath = msg.selectPath
-		if msg.err != nil {
-			m.status = ""
-			m.showError(msg.err)
+		return m.finish(msg)
+
+	case deleteStepMsg:
+		m.deleteErrs[msg.i] = msg.err
+		if next := msg.i + 1; next < len(m.deleting) {
+			m.activity = m.deleteActivity(next)
+			return m, m.deleteStep(next)
 		}
-		// Reload even on failure: a partly applied operation still changes the list.
-		if msg.err == nil && msg.postCreate != nil {
-			status := msg.status
-			return m, tea.Batch(m.loadWorktrees(), m.startBusy("Running "+config.PostCreateName+"…",
-				tea.Exec(&pauseOnFailure{PostCreate: msg.postCreate}, func(err error) tea.Msg {
-					return postCreateDoneMsg{status: status, err: err}
-				})))
-		}
-		return m, m.loadWorktrees()
+		return m.finish(m.deleteResult())
 
 	case postCreateDoneMsg:
 		m.endBusy()
@@ -113,6 +117,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// finish ends the busy popover with an operation's result and reloads the list.
+func (m model) finish(msg opDoneMsg) (tea.Model, tea.Cmd) {
+	m.endBusy()
+	m.status = msg.status
+	m.selectPath = msg.selectPath
+	if msg.err != nil {
+		m.status = ""
+		m.showError(msg.err)
+	}
+	// Reload even on failure: a partly applied operation still changes the list.
+	if msg.err == nil && msg.postCreate != nil {
+		status := msg.status
+		return m, tea.Batch(m.loadWorktrees(), m.startBusy("Running "+config.PostCreateName+"…",
+			tea.Exec(&pauseOnFailure{PostCreate: msg.postCreate}, func(err error) tea.Msg {
+				return postCreateDoneMsg{status: status, err: err}
+			})))
+	}
+	return m, m.loadWorktrees()
+}
+
 func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "Q":
@@ -129,6 +153,19 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cursor = 0
 	case "end", "G":
 		m.cursor = max(len(m.worktrees)-1, 0)
+	case "space":
+		// The main worktree can't be deleted, so it has no checkbox.
+		wt, ok := m.selected()
+		if !ok || m.repo.CheckChangeable(wt, "delete") != nil {
+			return m, nil
+		}
+		if m.checked[wt.Path] {
+			delete(m.checked, wt.Path)
+		} else {
+			m.checked[wt.Path] = true
+		}
+	case "esc":
+		clear(m.checked)
 	case "c", "C":
 		m.mode = modeCreate
 		m.formErr = ""
@@ -137,14 +174,26 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.baseInput.Blur()
 		return m, m.nameInput.Focus()
 	case "d", "D":
-		wt, ok := m.actionable("delete")
-		if !ok {
-			return m, nil
+		// Delete the checked worktrees, or the selected one if none are.
+		targets := m.checkedWorktrees()
+		if len(targets) == 0 {
+			wt, ok := m.actionable("delete")
+			if !ok {
+				return m, nil
+			}
+			targets = []git.Worktree{wt}
 		}
-		m.target = wt
-		m.warning = m.repo.UnmergedWarning(wt)
+		m.deleting = targets
+		m.warnings = make([]string, len(targets))
+		for i, wt := range targets {
+			m.warnings[i] = m.repo.UnmergedWarning(wt)
+		}
 		m.mode = modeDelete
 	case "r", "R":
+		// Rename acts on one worktree, so it's disabled while any are checked.
+		if len(m.checked) > 0 {
+			return m, nil
+		}
 		wt, ok := m.actionable("rename")
 		if !ok {
 			return m, nil
@@ -247,17 +296,61 @@ func (m model) updateCreate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
-		wt := m.target
-		name := m.repo.Name(wt)
-		g := m.repo
-		return m, m.startBusy(fmt.Sprintf("Deleting %s…", name), func() tea.Msg {
-			err := g.Delete(wt)
-			return opDoneMsg{status: fmt.Sprintf("Deleted worktree %s.", name), err: err}
-		})
+		m.deleteErrs = make([]error, len(m.deleting))
+		return m, m.startBusy(m.deleteActivity(0), m.deleteStep(0))
 	case "n", "N", "esc", "q":
 		m.mode = modeList
 	}
 	return m, nil
+}
+
+// deleteStep deletes m.deleting[i]. Each step's deleteStepMsg starts the next,
+// so they run one after another.
+func (m model) deleteStep(i int) tea.Cmd {
+	g, wt := m.repo, m.deleting[i]
+	return func() tea.Msg {
+		return deleteStepMsg{i: i, err: g.Delete(wt)}
+	}
+}
+
+func (m model) deleteActivity(i int) string {
+	name := m.repo.Name(m.deleting[i])
+	if len(m.deleting) == 1 {
+		return fmt.Sprintf("Deleting %s…", name)
+	}
+	return fmt.Sprintf("Deleting %s… (%d of %d)", name, i+1, len(m.deleting))
+}
+
+// deleteResult reports how a delete went. A failed single delete shows git's
+// error as it is; when several were deleted, the failures are listed.
+func (m model) deleteResult() opDoneMsg {
+	n := len(m.deleting)
+	if n == 1 {
+		return opDoneMsg{status: fmt.Sprintf("Deleted worktree %s.", m.repo.Name(m.deleting[0])), err: m.deleteErrs[0]}
+	}
+	var failed []string
+	for i, err := range m.deleteErrs {
+		if err != nil {
+			failed = append(failed, "• "+m.repo.Name(m.deleting[i])+": "+briefError(err))
+		}
+	}
+	if len(failed) == 0 {
+		return opDoneMsg{status: fmt.Sprintf("Deleted %d worktrees.", n)}
+	}
+	return opDoneMsg{err: fmt.Errorf("deleted %d of %d worktrees. %s:\n\n%s",
+		n-len(failed), n, plural(len(failed), "This one wasn't", "These weren't"), strings.Join(failed, "\n"))}
+}
+
+// briefError is err on one line, without the command a git error starts
+// with, for listing several errors together.
+func briefError(err error) string {
+	msg := err.Error()
+	// A type assertion rather than errors.As: that would also find a git
+	// error wrapped inside another, and drop the explanation around it.
+	if gerr, ok := err.(*git.Error); ok && strings.TrimSpace(gerr.Output) != "" {
+		msg = gerr.Output
+	}
+	return strings.Join(strings.Fields(msg), " ")
 }
 
 func (m model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
