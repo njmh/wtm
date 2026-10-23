@@ -22,12 +22,13 @@ func newDeleteCmd() *cobra.Command {
 		Long: `Delete the worktree, its directory and its branch. The worktree can be given
 by name, path or branch.
 
-Nothing is deleted if the worktree has uncommitted or untracked files, or if
-its branch has commits that aren't merged into its upstream (or into HEAD, when
-it has no upstream).
+Nothing is deleted if the worktree has uncommitted or untracked files.
 
 wtm asks before deleting unless --yes is given. When there's no terminal to ask
-in, such as in a script, --yes is required.`,
+in, such as in a script, --yes is required. If the branch has commits that
+aren't in its upstream (or in HEAD, when it has none), wtm warns about them but
+still deletes the branch: a squash-merged branch, or one whose upstream hasn't
+been fetched, looks unmerged too.`,
 		Args:              exactArgs("<worktree>"),
 		ValidArgsFunction: completeWorktree,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -43,8 +44,13 @@ in, such as in a script, --yes is required.`,
 				return err
 			}
 			name := repo.Name(wt)
-			if !yes {
-				ok, err := confirmDelete(cmd, repo, wt)
+			warning := repo.UnmergedWarning(wt)
+			if yes {
+				if warning != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning)
+				}
+			} else {
+				ok, err := confirmDelete(cmd, repo, wt, warning)
 				if err != nil {
 					return err
 				}
@@ -64,9 +70,10 @@ in, such as in a script, --yes is required.`,
 	return cmd
 }
 
-// confirmDelete shows what deleting wt removes and asks whether to go ahead.
-// Like git's own prompts, the question goes to stderr.
-func confirmDelete(cmd *cobra.Command, repo git.Repo, wt git.Worktree) (bool, error) {
+// confirmDelete shows what deleting wt removes, and warning if there is one,
+// and asks whether to go ahead. Like git's own prompts, the question goes to
+// stderr.
+func confirmDelete(cmd *cobra.Command, repo git.Repo, wt git.Worktree, warning string) (bool, error) {
 	if !isTerminal(cmd.InOrStdin()) {
 		return false, fmt.Errorf("not deleting %s without confirmation; use --yes to delete it from a script", repo.Name(wt))
 	}
@@ -74,8 +81,12 @@ func confirmDelete(cmd *cobra.Command, repo git.Repo, wt git.Worktree) (bool, er
 	if branch == "" {
 		branch = "none (detached HEAD)"
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Delete worktree %s? This permanently removes:\n\n  directory  %s\n  branch     %s\n\n[y/N] ",
+	fmt.Fprintf(cmd.ErrOrStderr(), "Delete worktree %s? This permanently removes:\n\n  directory  %s\n  branch     %s\n\n",
 		repo.Name(wt), shortPath(repo, wt.Path), branch)
+	if warning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n\n", warning)
+	}
+	fmt.Fprint(cmd.ErrOrStderr(), "[y/N] ")
 
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {

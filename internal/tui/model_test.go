@@ -145,15 +145,22 @@ func TestCreateRenameDeleteFlow(t *testing.T) {
 
 	// Delete: cancel first, then confirm.
 	m, _ = press(m, "d")
-	if m.mode != modeDelete {
-		t.Fatalf("mode = %v", m.mode)
+	if m.mode != modeDelete || strings.Contains(screen(m), "Warning") {
+		t.Fatalf("mode = %v, screen:\n%s", m.mode, screen(m))
 	}
 	checkFits(t, m)
 	m, _ = press(m, "n")
 	if m.mode != modeList || len(m.worktrees) != 2 {
 		t.Fatal("cancel did not return to the list")
 	}
+	// Unmerged commits are warned about, but don't stop the delete.
+	wt, _ := m.selected()
+	gittest.Run(t, wt.Path, "git", "commit", "-q", "--allow-empty", "-m", "work")
 	m, _ = press(m, "d")
+	if s := screen(m); !strings.Contains(s, "Warning: branch \"better\" has 1") {
+		t.Errorf("no unmerged warning:\n%s", s)
+	}
+	checkFits(t, m)
 	m, cmd = press(m, "y")
 	m = settle(t, m, cmd)
 	if len(m.worktrees) != 1 || m.mode != modeList {

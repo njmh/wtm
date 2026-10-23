@@ -48,8 +48,9 @@ type model struct {
 	width     int
 	height    int
 
-	mode   mode
-	target git.Worktree // the worktree being deleted or renamed
+	mode    mode
+	target  git.Worktree // the worktree being deleted or renamed
+	warning string       // shown in the delete popover, e.g. unmerged commits
 
 	nameInput   textinput.Model
 	baseInput   textinput.Model

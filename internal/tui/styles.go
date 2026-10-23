@@ -19,6 +19,7 @@ var (
 	okStyle    = lipgloss.NewStyle().Foreground(colorOK)
 	busyStyle  = lipgloss.NewStyle().Foreground(colorWarn)
 	errorStyle = lipgloss.NewStyle().Foreground(colorDanger)
+	warnStyle  = lipgloss.NewStyle().Foreground(colorWarn)
 	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	modalStyle = lipgloss.NewStyle().

@@ -226,15 +226,43 @@ func TestDeleteRefusesToLoseWork(t *testing.T) {
 		t.Fatal("worktree or branch was removed")
 	}
 
-	// Committed, but not merged into main.
-	gittest.Run(t, wt.Path, "git", "add", ".")
-	gittest.Run(t, wt.Path, "git", "commit", "-q", "-m", "work")
-	err := g.Delete(wt)
-	if err == nil || !strings.Contains(err.Error(), "aren't merged into main") {
-		t.Fatalf("err = %v, want unmerged error", err)
+}
+
+func TestUnmergedWarning(t *testing.T) {
+	g := newContainer(t)
+	if err := g.Create("feat", "main"); err != nil {
+		t.Fatal(err)
 	}
-	if !exists(wt.Path) || !g.branchExists("dirty") {
-		t.Fatal("worktree or branch was removed")
+	wt := find(t, g, "feat")
+	if w := g.UnmergedWarning(wt); w != "" {
+		t.Errorf("new branch: warning = %q", w)
+	}
+
+	// Committed, but not in main: warn, but delete anyway when asked.
+	gittest.Run(t, wt.Path, "git", "commit", "-q", "--allow-empty", "-m", "work")
+	if w := g.UnmergedWarning(wt); !strings.Contains(w, `"feat" has 1 commit that isn't in main.`) {
+		t.Errorf("unmerged: warning = %q", w)
+	}
+
+	// An upstream that has the commits is checked instead of HEAD.
+	gittest.Run(t, wt.Path, "git", "branch", "pushed")
+	gittest.Run(t, wt.Path, "git", "branch", "-q", "--set-upstream-to=pushed")
+	if w := g.UnmergedWarning(wt); w != "" {
+		t.Errorf("with upstream: warning = %q", w)
+	}
+	gittest.Run(t, wt.Path, "git", "commit", "-q", "--allow-empty", "-m", "more")
+	if w := g.UnmergedWarning(wt); !strings.Contains(w, "1 commit that isn't in pushed.") {
+		t.Errorf("ahead of upstream: warning = %q", w)
+	}
+
+	if err := g.Delete(wt); err != nil {
+		t.Fatal(err)
+	}
+	if exists(wt.Path) || g.branchExists("feat") {
+		t.Error("worktree or branch still exists")
+	}
+	if w := g.UnmergedWarning(mustList(t, g)[0]); w != "" {
+		t.Errorf("bare repository: warning = %q", w)
 	}
 }
 

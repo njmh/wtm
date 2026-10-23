@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -57,15 +57,12 @@ func (g Repo) Create(name, base string) error {
 }
 
 // Delete removes the worktree, its directory and its branch. It refuses to
-// discard uncommitted changes or unmerged commits; git's error is returned.
+// discard uncommitted changes (git's error is returned), but deletes the
+// branch even if it has unmerged commits: callers should show
+// UnmergedWarning first and let the user decide.
 func (g Repo) Delete(wt Worktree) error {
 	if err := g.CheckChangeable(wt, "delete"); err != nil {
 		return err
-	}
-	if wt.Branch != "" {
-		if err := g.checkMerged(wt.Branch); err != nil {
-			return err
-		}
 	}
 	if _, err := g.run("worktree", "remove", g.arg(wt.Path)); err != nil {
 		return err
@@ -74,31 +71,43 @@ func (g Repo) Delete(wt Worktree) error {
 	if wt.Branch == "" {
 		return nil
 	}
-	if _, err := g.run("branch", "-d", wt.Branch); err != nil {
+	if _, err := g.run("branch", "-D", wt.Branch); err != nil {
 		return fmt.Errorf("the worktree was removed, but branch %q was not deleted.\n\n%w", wt.Branch, err)
 	}
 	return nil
 }
 
-// checkMerged mirrors the safety check of `git branch -d` (merged into its
-// upstream, or into HEAD when it has none) so Delete can refuse up front
-// instead of failing after the worktree is already gone.
-func (g Repo) checkMerged(branch string) error {
+// UnmergedWarning returns a warning when deleting wt would lose commits that
+// aren't in its branch's upstream (or HEAD, when it has none), or "" when it
+// wouldn't. This is the check `git branch -d` makes, but a branch that was
+// squash-merged, or whose upstream hasn't been fetched lately, fails it too,
+// so it's advice rather than a reason to refuse.
+func (g Repo) UnmergedWarning(wt Worktree) string {
+	if wt.Branch == "" {
+		return ""
+	}
 	into := "HEAD"
-	if _, err := g.run("rev-parse", "--verify", "--quiet", branch+"@{upstream}"); err == nil {
-		into = branch + "@{upstream}"
+	if out, err := g.run("rev-parse", "--abbrev-ref", "--verify", "--quiet", wt.Branch+"@{upstream}"); err == nil {
+		into = strings.TrimSpace(out)
 	}
-	_, err := g.run("merge-base", "--is-ancestor", branch, into)
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		if into == "HEAD" {
-			if out, err := g.run("symbolic-ref", "--short", "HEAD"); err == nil {
-				into = strings.TrimSpace(out)
-			}
+	out, err := g.run("rev-list", "--count", into+".."+wt.Branch)
+	if err != nil {
+		return ""
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil || n == 0 {
+		return ""
+	}
+	if into == "HEAD" {
+		if out, err := g.run("symbolic-ref", "--short", "HEAD"); err == nil {
+			into = strings.TrimSpace(out)
 		}
-		return fmt.Errorf("branch %q has commits that aren't merged into %s, so nothing was deleted.\n\nMerge it first, or delete it manually with:\n  git worktree remove <path>\n  git branch -D %s", branch, into, branch)
 	}
-	return err
+	commits := "commits that aren't"
+	if n == 1 {
+		commits = "commit that isn't"
+	}
+	return fmt.Sprintf("branch %q has %d %s in %s. That's expected if it was squash-merged or %s is out of date; otherwise they'll be lost.", wt.Branch, n, commits, into, into)
 }
 
 // Rename moves the worktree to Root/newName and renames its branch to newName.

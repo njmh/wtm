@@ -233,6 +233,32 @@ func TestDeleteRefusesToLoseWork(t *testing.T) {
 	}
 }
 
+func TestDeleteWarnsAboutUnmergedCommits(t *testing.T) {
+	dir := gittest.NewContainer(t)
+	for _, name := range []string{"a", "b"} {
+		mustRun(t, dir, "create", name)
+		gittest.Run(t, filepath.Join(dir, name), "git", "commit", "-q", "--allow-empty", "-m", "work")
+	}
+	warning := `Warning: branch "a" has 1 commit that isn't in main.`
+
+	out, stderr, err := run(t, dir, "", "delete", "a", "-y")
+	if err != nil || out != "Deleted worktree a.\n" || !strings.HasPrefix(stderr, warning) {
+		t.Errorf("--yes: err = %v, output %q, stderr %q", err, out, stderr)
+	}
+
+	pretendTerminal(t)
+	_, prompt, err := run(t, dir, "y\n", "rm", "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "branch     b\n\nWarning: branch \"b\"") || !strings.HasSuffix(prompt, "\n\n[y/N] ") {
+		t.Errorf("prompt:\n%s", prompt)
+	}
+	if got := worktrees(t, dir); len(got) != 1 {
+		t.Errorf("worktrees left: %v", got)
+	}
+}
+
 func TestRename(t *testing.T) {
 	dir := gittest.NewContainer(t)
 	mustRun(t, dir, "create", "old")
