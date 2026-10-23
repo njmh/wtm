@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/njmh/wtm/internal/git"
 )
 
 // configDir holds wtm's settings, in the directory wtm is started from.
@@ -75,13 +77,13 @@ type postCreateHook struct {
 	cmd *exec.Cmd
 }
 
-func newPostCreateHook(script string, g Git, name, branch, base string) *postCreateHook {
+func newPostCreateHook(script string, g git.Repo, name, branch, base string) *postCreateHook {
 	path := g.Path(name)
 	cmd := exec.Command("bash", script)
 	cmd.Dir = path
 	cmd.Env = append(os.Environ(),
 		"WTM_DIR="+g.Dir,
-		"WTM_WORKTREE_ROOT="+g.root(),
+		"WTM_WORKTREE_ROOT="+g.WorktreeRoot(),
 		"WTM_WORKTREE_NAME="+name,
 		"WTM_WORKTREE_PATH="+path,
 		"WTM_BRANCH="+branch,

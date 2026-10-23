@@ -7,6 +7,8 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/njmh/wtm/internal/git"
 )
 
 type mode int
@@ -21,7 +23,7 @@ const (
 
 type (
 	worktreesMsg struct {
-		list []Worktree
+		list []git.Worktree
 		err  error
 	}
 	opDoneMsg struct {
@@ -40,15 +42,15 @@ type (
 )
 
 type model struct {
-	git       Git
-	worktrees []Worktree
+	repo      git.Repo
+	worktrees []git.Worktree
 	cursor    int
 	offset    int // first visible row when the list scrolls
 	width     int
 	height    int
 
 	mode   mode
-	target Worktree // the worktree being deleted or renamed
+	target git.Worktree // the worktree being deleted or renamed
 
 	nameInput   textinput.Model
 	baseInput   textinput.Model
@@ -61,9 +63,9 @@ type model struct {
 	selectPath string
 }
 
-func newModel(g Git) model {
+func newModel(g git.Repo) model {
 	return model{
-		git:         g,
+		repo:        g,
 		nameInput:   newInput("feature-x"),
 		baseInput:   newInput("main"),
 		renameInput: newInput("new-name"),
@@ -83,16 +85,16 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) loadWorktrees() tea.Cmd {
-	g := m.git
+	g := m.repo
 	return func() tea.Msg {
 		list, err := g.List()
 		return worktreesMsg{list: list, err: err}
 	}
 }
 
-func (m model) selected() (Worktree, bool) {
+func (m model) selected() (git.Worktree, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.worktrees) {
-		return Worktree{}, false
+		return git.Worktree{}, false
 	}
 	return m.worktrees[m.cursor], true
 }
@@ -230,7 +232,7 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.formErr = ""
 		// Renaming moves the worktree into the worktree path, so for one outside
 		// it suggest just its folder name.
-		name, ok := m.git.InRoot(wt)
+		name, ok := m.repo.InRoot(wt)
 		if !ok {
 			name = filepath.Base(wt.Path)
 		}
@@ -243,7 +245,7 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.busy = true
 		m.status = "Pruning worktrees…"
-		g := m.git
+		g := m.repo
 		return m, func() tea.Msg {
 			n, err := g.Prune()
 			status := "Nothing to prune."
@@ -259,7 +261,7 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // actionable returns the selected worktree if it can be deleted or renamed,
 // and otherwise explains why not in the error dialog.
-func (m *model) actionable(verb string) (Worktree, bool) {
+func (m *model) actionable(verb string) (git.Worktree, bool) {
 	wt, ok := m.selected()
 	if !ok {
 		return wt, false
@@ -269,7 +271,7 @@ func (m *model) actionable(verb string) (Worktree, bool) {
 		if wt.Bare {
 			kind = "bare repository"
 		}
-		m.showError(fmt.Errorf("the %s (%s) can't be %sd", kind, m.git.Name(wt), verb))
+		m.showError(fmt.Errorf("the %s (%s) can't be %sd", kind, m.repo.Name(wt), verb))
 		return wt, false
 	}
 	return wt, true
@@ -301,7 +303,7 @@ func (m model) updateCreate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		m.busy = true
 		m.status = fmt.Sprintf("Creating %s from %s…", name, base)
-		g := m.git
+		g := m.repo
 		return m, func() tea.Msg {
 			err := g.Create(name, base)
 			msg := opDoneMsg{
@@ -329,11 +331,11 @@ func (m model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
 		wt := m.target
-		name := m.git.Name(wt)
+		name := m.repo.Name(wt)
 		m.mode = modeList
 		m.busy = true
 		m.status = fmt.Sprintf("Deleting %s…", name)
-		g := m.git
+		g := m.repo
 		return m, func() tea.Msg {
 			err := g.Delete(wt)
 			return opDoneMsg{status: fmt.Sprintf("Deleted worktree %s.", name), err: err}
@@ -351,7 +353,7 @@ func (m model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		wt := m.target
-		oldName := m.git.Name(wt)
+		oldName := m.repo.Name(wt)
 		newName := strings.TrimSpace(m.renameInput.Value())
 		if newName == "" {
 			m.formErr = "Enter a new name."
@@ -364,7 +366,7 @@ func (m model) updateRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		m.busy = true
 		m.status = fmt.Sprintf("Renaming %s to %s…", oldName, newName)
-		g := m.git
+		g := m.repo
 		return m, func() tea.Msg {
 			err := g.Rename(wt, newName)
 			return opDoneMsg{

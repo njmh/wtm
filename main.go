@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/njmh/wtm/internal/git"
 )
 
 func main() {
@@ -32,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	g := Git{Dir: dir, Root: cfg.root(dir)}
+	g := git.Repo{Dir: dir, Root: cfg.root(dir)}
 	if _, err := tea.NewProgram(newModel(g)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wtm:", err)
 		os.Exit(1)

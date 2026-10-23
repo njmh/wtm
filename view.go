@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/njmh/wtm/internal/git"
 )
 
 var (
@@ -75,11 +77,11 @@ func (m model) mainView() string {
 
 	title := " " + titleStyle.Render("Worktree Manager") + "  "
 	note := ""
-	if root := m.git.root(); root != m.git.Dir {
+	if root := m.repo.WorktreeRoot(); root != m.repo.Dir {
 		note = mutedStyle.Render("  →  worktrees in ") + m.shortPath(root)
 	}
 	// Shorten the directory from the left so the worktree path stays visible.
-	dir := m.shortPath(m.git.Dir)
+	dir := m.shortPath(m.repo.Dir)
 	if room := max(m.width-ansi.StringWidth(title)-ansi.StringWidth(note), 10); ansi.StringWidth(dir) > room {
 		dir = ansi.TruncateLeft(dir, ansi.StringWidth(dir)-room+1, "…")
 	}
@@ -113,7 +115,7 @@ func (m model) listView() string {
 	names := make([]string, len(m.worktrees))
 	nameW, branchW := len("WORKTREE"), len("BRANCH")
 	for i, wt := range m.worktrees {
-		names[i] = m.git.Name(wt)
+		names[i] = m.repo.Name(wt)
 		nameW = max(nameW, ansi.StringWidth(names[i]))
 		branchW = max(branchW, ansi.StringWidth(branchLabel(wt)))
 	}
@@ -169,8 +171,8 @@ func (m model) listView() string {
 // shortPath shows paths inside the working directory as ./name and
 // abbreviates the home directory to ~.
 func (m model) shortPath(path string) string {
-	if path != m.git.Dir {
-		if rel, ok := relInside(m.git.Dir, path); ok {
+	if path != m.repo.Dir {
+		if rel, ok := git.RelInside(m.repo.Dir, path); ok {
 			return "./" + rel
 		}
 	}
@@ -182,7 +184,7 @@ func (m model) shortPath(path string) string {
 	return path
 }
 
-func branchLabel(wt Worktree) string {
+func branchLabel(wt git.Worktree) string {
 	switch {
 	case wt.Branch != "":
 		return wt.Branch
@@ -194,7 +196,7 @@ func branchLabel(wt Worktree) string {
 	return ""
 }
 
-func tagsOf(wt Worktree) []string {
+func tagsOf(wt git.Worktree) []string {
 	var tags []string
 	if wt.Bare {
 		tags = append(tags, "bare")
@@ -224,10 +226,10 @@ func tagStyle(tag string) lipgloss.Style {
 // directory, and whether post_create.sh will run.
 func (m model) createNote() string {
 	var notes []string
-	if root := m.git.root(); root != m.git.Dir {
+	if root := m.repo.WorktreeRoot(); root != m.repo.Dir {
 		notes = append(notes, "Created in "+m.shortPath(root)+"/")
 	}
-	if postCreateScript(m.git.Dir) != "" {
+	if postCreateScript(m.repo.Dir) != "" {
 		notes = append(notes, "runs "+filepath.Join(configDir, "post_create.sh"))
 	}
 	if len(notes) == 0 {
@@ -282,7 +284,7 @@ func (m model) modalView() string {
 	case modeRename:
 		in := m.renameInput
 		in.SetWidth(inner - 3)
-		current := mutedStyle.Render("directory ") + labelStyle.Render(m.git.Name(m.target))
+		current := mutedStyle.Render("directory ") + labelStyle.Render(m.repo.Name(m.target))
 		if m.target.Branch != "" {
 			current += mutedStyle.Render(" and branch ") + labelStyle.Render(m.target.Branch)
 		}

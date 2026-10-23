@@ -64,49 +64,6 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-func TestWorktreePath(t *testing.T) {
-	g := newContainer(t)
-	g.Root = filepath.Join(g.Dir, "trees")
-
-	// git creates the worktree path itself the first time.
-	if err := g.Create("feature/a", "main"); err != nil {
-		t.Fatal(err)
-	}
-	wt := find(t, g, "feature/a")
-	if wt.Path != filepath.Join(g.Dir, "trees", "feature", "a") {
-		t.Errorf("created at %s", wt.Path)
-	}
-	if name := g.Name(mustList(t, g)[0]); name != "./.bare" {
-		t.Errorf("bare repo outside the worktree path is named %q", name)
-	}
-
-	if err := g.Rename(wt, "b"); err != nil {
-		t.Fatal(err)
-	}
-	if exists(filepath.Join(g.Dir, "trees", "feature")) {
-		t.Error("empty parent folder left behind after rename")
-	}
-	if err := g.Delete(find(t, g, "b")); err != nil {
-		t.Fatal(err)
-	}
-	if !exists(filepath.Join(g.Dir, "trees")) {
-		t.Error("the worktree path itself was removed")
-	}
-
-	// A worktree created outside the worktree path is moved into it by rename.
-	sh(t, g.Dir, "git", "worktree", "add", "-q", "-b", "old", "./old", "main")
-	old := find(t, g, "./old")
-	if _, ok := g.InRoot(old); ok {
-		t.Fatal("./old should be outside the worktree path")
-	}
-	if err := g.Rename(old, "old"); err != nil {
-		t.Fatal(err)
-	}
-	if find(t, g, "old").Path != filepath.Join(g.Dir, "trees", "old") || exists(filepath.Join(g.Dir, "old")) {
-		t.Error("rename didn't move the worktree into the worktree path")
-	}
-}
-
 func TestPostCreateHook(t *testing.T) {
 	g := newContainer(t)
 	g.Root = filepath.Join(g.Dir, "trees")
@@ -155,7 +112,7 @@ echo "dir=$WTM_DIR root=$WTM_WORKTREE_ROOT name=$WTM_WORKTREE_NAME path=$WTM_WOR
 
 func TestCreateRunsPostCreateHook(t *testing.T) {
 	m := startModel(t)
-	writeFile(t, filepath.Join(m.git.Dir, configDir, "post_create.sh"), "true\n")
+	writeFile(t, filepath.Join(m.repo.Dir, configDir, "post_create.sh"), "true\n")
 
 	m, _ = press(m, "c")
 	if !strings.Contains(screen(m), "Runs .wtm/post_create.sh.") {
@@ -167,7 +124,7 @@ func TestCreateRunsPostCreateHook(t *testing.T) {
 	if !ok || msg.err != nil || msg.postCreate == nil {
 		t.Fatalf("create result = %+v", msg)
 	}
-	if msg.postCreate.cmd.Dir != m.git.Path("feat") {
+	if msg.postCreate.cmd.Dir != m.repo.Path("feat") {
 		t.Errorf("hook runs in %s", msg.postCreate.cmd.Dir)
 	}
 
@@ -216,7 +173,7 @@ func TestWorktreePathShown(t *testing.T) {
 	m = typeText(m, "x")
 	m, cmd := press(m, "enter")
 	m = settle(t, m, cmd)
-	if wt, _ := m.selected(); m.git.Name(wt) != "x" || wt.Path != filepath.Join(g.Dir, "trees", "x") {
+	if wt, _ := m.selected(); m.repo.Name(wt) != "x" || wt.Path != filepath.Join(g.Dir, "trees", "x") {
 		t.Errorf("selected %+v", wt)
 	}
 	checkFits(t, m)
