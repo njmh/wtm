@@ -70,6 +70,10 @@ current directory), and .wtm/post_create.sh runs after each one is created.`,
 	root.SetFlagErrorFunc(usageError)
 	root.AddCommand(
 		newListCmd(),
+		newCreateCmd(),
+		newDeleteCmd(),
+		newRenameCmd(),
+		newPruneCmd(),
 	)
 	return root
 }

@@ -50,7 +50,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.busy = true
 			m.status = "Running " + config.PostCreateName + "…"
 			status := msg.status
-			return m, tea.Batch(m.loadWorktrees(), tea.Exec(msg.postCreate, func(err error) tea.Msg {
+			return m, tea.Batch(m.loadWorktrees(), tea.Exec(&pauseOnFailure{PostCreate: msg.postCreate}, func(err error) tea.Msg {
 				return postCreateDoneMsg{status: status, err: err}
 			}))
 		}

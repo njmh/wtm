@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/njmh/wtm/internal/config"
 	"github.com/njmh/wtm/internal/gittest"
+	"github.com/njmh/wtm/internal/hook"
 )
 
 func TestCreateRunsPostCreateHook(t *testing.T) {
@@ -79,4 +81,29 @@ func TestWorktreePathShown(t *testing.T) {
 		t.Errorf("selected %+v", wt)
 	}
 	checkFits(t, m)
+}
+
+func TestHookPausesOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "post_create.sh")
+	gittest.WriteFile(t, script, "echo $WTM_BRANCH\n[ \"$WTM_BRANCH\" != fail ] || exit 3\n")
+
+	run := func(branch string) (string, error) {
+		p := &pauseOnFailure{PostCreate: hook.NewPostCreate(script, hook.Env{Path: dir, Branch: branch})}
+		var out bytes.Buffer
+		p.SetStdin(strings.NewReader("\n"))
+		p.SetStdout(&out)
+		p.SetStderr(&out)
+		err := p.Run()
+		return out.String(), err
+	}
+
+	if out, err := run("ok"); err != nil || out != "ok\n" {
+		t.Errorf("success: err = %v, output %q", err, out)
+	}
+	// A failing script waits for Enter so its output can be read.
+	out, err := run("fail")
+	if err == nil || out != "fail\n\nwtm: .wtm/post_create.sh failed (exit status 3). Press Enter to return to wtm." {
+		t.Errorf("failure: err = %v, output %q", err, out)
+	}
 }
