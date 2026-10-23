@@ -179,12 +179,8 @@ func (m *model) actionable(verb string) (git.Worktree, bool) {
 	if !ok {
 		return wt, false
 	}
-	if wt.Main {
-		kind := "main worktree"
-		if wt.Bare {
-			kind = "bare repository"
-		}
-		m.showError(fmt.Errorf("the %s (%s) can't be %sd", kind, m.repo.Name(wt), verb))
+	if err := m.repo.CheckChangeable(wt, verb); err != nil {
+		m.showError(err)
 		return wt, false
 	}
 	return wt, true
