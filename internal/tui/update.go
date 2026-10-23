@@ -134,6 +134,7 @@ func (m model) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.target = wt
+		m.warning = m.repo.UnmergedWarning(wt)
 		m.mode = modeDelete
 	case "r", "R":
 		wt, ok := m.actionable("rename")

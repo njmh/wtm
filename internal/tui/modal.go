@@ -92,7 +92,7 @@ func (m model) modalView() string {
 		if branch == "" {
 			branch = "none (detached HEAD)"
 		}
-		body := strings.Join([]string{
+		lines := []string{
 			errorStyle.Bold(true).Render("Delete worktree?"),
 			"",
 			"This permanently removes:",
@@ -100,10 +100,15 @@ func (m model) modalView() string {
 			"  " + mutedStyle.Render("directory  ") + labelStyle.Render(ansi.Truncate(m.shortPath(m.target.Path), inner-13, "…")),
 			"  " + mutedStyle.Render("branch     ") + labelStyle.Render(branch),
 			"",
-			mutedStyle.Render("Fails safely if there are uncommitted changes or unmerged commits."),
+		}
+		if m.warning != "" {
+			lines = append(lines, warnStyle.Width(inner).Render("Warning: "+m.warning), "")
+		}
+		body := strings.Join(append(lines,
+			mutedStyle.Render("Fails safely if there are uncommitted changes."),
 			"",
 			hint("y", "delete", "n/esc", "cancel"),
-		}, "\n")
+		), "\n")
 		return style.BorderForeground(colorDanger).Render(body)
 
 	case modeError:

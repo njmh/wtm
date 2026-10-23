@@ -29,9 +29,11 @@ myproject/
 | P          | `git worktree prune`                                                   |
 | Q, ctrl+c  | Quit                                                                   |
 
-Deletion is safe: it refuses (and changes nothing) when the worktree has
-uncommitted or untracked files, or when the branch has commits not merged into
-its upstream (or `HEAD` if it has none). Every git error is shown in a dialog.
+Deletion refuses (and changes nothing) when the worktree has uncommitted or
+untracked files. When the branch has commits that aren't in its upstream (or
+`HEAD` if it has none), the confirmation shows a warning, but you can still
+delete it: squash-merged branches, and branches whose upstream hasn't been
+fetched, look unmerged too. Every git error is shown in a dialog.
 
 ## Command line
 
