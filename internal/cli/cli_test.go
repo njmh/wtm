@@ -9,8 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/pflag"
+
 	"github.com/njmh/wtm/internal/git"
 	"github.com/njmh/wtm/internal/gittest"
+	"github.com/njmh/wtm/internal/hook"
 )
 
 // run runs wtm with args in dir, with stdin, and returns what it printed.
@@ -316,5 +319,105 @@ func TestCompletion(t *testing.T) {
 		if out != want {
 			t.Errorf("complete %q:\n%s\nwant:\n%s", args, out, want)
 		}
+	}
+}
+
+func TestSkill(t *testing.T) {
+	// Not a repository: describing wtm doesn't need one.
+	out := mustRun(t, t.TempDir(), "skill")
+	if out != skillContext {
+		t.Errorf("output:\n%s", out)
+	}
+
+	// The description is written by hand, so check it keeps up with the
+	// commands and their flags.
+	root := newRootCmd()
+	for _, cmd := range root.Commands() {
+		if !strings.Contains(out, "`wtm "+cmd.Name()) {
+			t.Errorf("wtm skill doesn't mention the %s command", cmd.Name())
+		}
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if !strings.Contains(out, "--"+f.Name) {
+				t.Errorf("wtm skill doesn't mention %s --%s", cmd.Name(), f.Name)
+			}
+		})
+	}
+	// And with what the hook is given.
+	for _, kv := range (hook.Env{}).Vars() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !strings.Contains(out, "`"+name+"`") {
+			t.Errorf("wtm skill doesn't mention %s", name)
+		}
+	}
+}
+
+func TestSkillInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	dir := t.TempDir()
+
+	for agent, want := range map[string]string{
+		"claude":   ".claude/skills/wtm/SKILL.md",
+		"codex":    ".agents/skills/wtm/SKILL.md",
+		"copilot":  ".copilot/skills/wtm/SKILL.md",
+		"cursor":   ".cursor/skills/wtm/SKILL.md",
+		"gemini":   ".gemini/skills/wtm/SKILL.md",
+		"opencode": ".config/opencode/skills/wtm/SKILL.md",
+	} {
+		out := mustRun(t, dir, "skill", "install", agent)
+		if !strings.HasPrefix(out, "Installed the wtm skill for ") || !strings.HasSuffix(out, " at ~/"+want+".\n") {
+			t.Errorf("%s: output = %q", agent, out)
+		}
+		got, err := os.ReadFile(filepath.Join(home, want))
+		if err != nil || string(got) != skillFile {
+			t.Errorf("%s: err = %v, file:\n%s", agent, err, got)
+		}
+	}
+	if len(skillAgents) != 6 {
+		t.Errorf("%d agents, but 6 are tested", len(skillAgents))
+	}
+	if !strings.HasPrefix(skillFile, "---\nname: "+skillName+"\ndescription: ") || !strings.Contains(skillFile, "wtm skill") {
+		t.Errorf("skill file:\n%s", skillFile)
+	}
+
+	// Installing again replaces the file.
+	path := filepath.Join(home, ".claude", "skills", "wtm", "SKILL.md")
+	gittest.WriteFile(t, path, "old")
+	if out := mustRun(t, dir, "skill", "install", "Claude"); out != "Updated the wtm skill for Claude Code at ~/.claude/skills/wtm/SKILL.md.\n" {
+		t.Errorf("output = %q", out)
+	}
+	if got, _ := os.ReadFile(path); string(got) != skillFile {
+		t.Errorf("file wasn't replaced:\n%s", got)
+	}
+
+	// The agent's own setting for its directory is followed.
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "elsewhere"))
+	mustRun(t, dir, "skill", "install", "claude")
+	if _, err := os.Stat(filepath.Join(home, "elsewhere", "skills", "wtm", "SKILL.md")); err != nil {
+		t.Error(err)
+	}
+
+	// --dir is relative to the current directory.
+	mustRun(t, dir, "skill", "install", "--dir", ".agent/skills")
+	if _, err := os.Stat(filepath.Join(dir, ".agent", "skills", "wtm", "SKILL.md")); err != nil {
+		t.Error(err)
+	}
+
+	for args, want := range map[string]string{
+		"skill install":                "missing <agent>\nRun 'wtm skill install --help' for usage.",
+		"skill install nope":           "unknown agent \"nope\" (wtm knows claude, codex, copilot, cursor, gemini, opencode; use --dir for others)\nRun 'wtm skill install --help' for usage.",
+		"skill install claude --dir x": "give an agent or --dir, not both\nRun 'wtm skill install --help' for usage.",
+		"skill nope":                   "unexpected argument \"nope\"\nRun 'wtm skill --help' for usage.",
+	} {
+		_, _, err := run(t, dir, "", strings.Fields(args)...)
+		if err == nil || err.Error() != want {
+			t.Errorf("wtm %s: err = %v, want %q", args, err, want)
+		}
+	}
+
+	if out := mustRun(t, dir, "__complete", "skill", "install", ""); !strings.HasPrefix(out, "claude\tClaude Code\ncodex\tCodex\n") {
+		t.Errorf("completion:\n%s", out)
 	}
 }

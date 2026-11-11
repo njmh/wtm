@@ -17,6 +17,19 @@ type Env struct {
 	Base   string // the branch it was created from
 }
 
+// Vars is the environment the script is given on top of wtm's own, as
+// "NAME=value" strings.
+func (e Env) Vars() []string {
+	return []string{
+		"WTM_DIR=" + e.Dir,
+		"WTM_WORKTREE_ROOT=" + e.Root,
+		"WTM_WORKTREE_NAME=" + e.Name,
+		"WTM_WORKTREE_PATH=" + e.Path,
+		"WTM_BRANCH=" + e.Branch,
+		"WTM_BASE_BRANCH=" + e.Base,
+	}
+}
+
 // PostCreate runs .wtm/post_create.sh with bash inside a new worktree. It
 // implements tea.ExecCommand, so the TUI can hand it the terminal (see
 // tea.Exec); the CLI connects it to its own stdin and stdout. Either way the
@@ -29,14 +42,7 @@ type PostCreate struct {
 func NewPostCreate(script string, env Env) *PostCreate {
 	cmd := exec.Command("bash", script)
 	cmd.Dir = env.Path
-	cmd.Env = append(os.Environ(),
-		"WTM_DIR="+env.Dir,
-		"WTM_WORKTREE_ROOT="+env.Root,
-		"WTM_WORKTREE_NAME="+env.Name,
-		"WTM_WORKTREE_PATH="+env.Path,
-		"WTM_BRANCH="+env.Branch,
-		"WTM_BASE_BRANCH="+env.Base,
-	)
+	cmd.Env = append(os.Environ(), env.Vars()...)
 	return &PostCreate{cmd: cmd}
 }
 

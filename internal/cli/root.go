@@ -41,7 +41,8 @@ current directory), and .wtm/post_create.sh runs after each one is created.`,
   wtm create fix -b develop    Create fix from develop
   wtm rename fix bugfix        Rename worktree and branch fix to bugfix
   wtm delete bugfix            Delete worktree and branch bugfix
-  wtm prune                    Clean up worktrees whose directory is gone`,
+  wtm prune                    Clean up worktrees whose directory is gone
+  wtm skill                    Describe wtm to an AI agent`,
 		Version: version(),
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -74,6 +75,7 @@ current directory), and .wtm/post_create.sh runs after each one is created.`,
 		newDeleteCmd(),
 		newRenameCmd(),
 		newPruneCmd(),
+		newSkillCmd(),
 	)
 	return root
 }

@@ -52,6 +52,8 @@ Every action in the TUI is also a command:
 | `wtm delete <worktree> [-y]`                 | `rm`  | Delete the worktree, its directory and its branch            |
 | `wtm rename <worktree> <new-name>`           | `mv`  | Rename the worktree's directory and branch                   |
 | `wtm prune`                                  |       | `git worktree prune`                                         |
+| `wtm skill`                                  |       | Describe wtm to an AI agent (see [AI agents](#ai-agents))    |
+| `wtm skill install <agent>`                  |       | Install a skill that tells an agent to run `wtm skill`       |
 
 `<worktree>` is a name as shown by `wtm list`, a path, or a branch name. The
 same safety checks apply as in the TUI. `delete` asks for confirmation unless
@@ -71,6 +73,37 @@ wtm completion zsh > "${fpath[1]}/_wtm"
 ```
 
 Run `wtm completion <shell> --help` for each shell's setup.
+
+## AI agents
+
+`wtm skill` prints a description of wtm written for an AI coding agent: the
+commands, the configuration and how `post_create.sh` is run. Put it in an
+agent's context before asking for help with wtm:
+
+```sh
+claude "$(wtm skill) Write a post_create.sh for this project."
+```
+
+`wtm skill install <agent>` saves you doing that each time. It installs a
+small skill called `wtm` in the agent's personal skills, which tells the agent
+to run `wtm skill` itself when you ask it about wtm. Because the skill only
+points at the command, it doesn't go out of date when wtm is upgraded.
+
+| Agent      |                    | Installed in                            |
+|------------|--------------------|-----------------------------------------|
+| `claude`   | Claude Code        | `~/.claude/skills/wtm/SKILL.md`         |
+| `codex`    | Codex              | `~/.agents/skills/wtm/SKILL.md`         |
+| `copilot`  | GitHub Copilot CLI | `~/.copilot/skills/wtm/SKILL.md`        |
+| `cursor`   | Cursor             | `~/.cursor/skills/wtm/SKILL.md`         |
+| `gemini`   | Gemini CLI         | `~/.gemini/skills/wtm/SKILL.md`         |
+| `opencode` | opencode           | `~/.config/opencode/skills/wtm/SKILL.md` |
+
+For another agent, or to install into one project, give the skills directory
+with `--dir`, e.g. `wtm skill install --dir .claude/skills`. Installing again
+replaces the file.
+
+The description lives in `internal/cli/skill.md`; update it along with this
+README when wtm's behaviour changes.
 
 ## Configuration
 
