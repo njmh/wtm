@@ -21,6 +21,9 @@ var (
 	// PostCreateName is the script run after each create, relative to the
 	// directory wtm runs in.
 	PostCreateName = filepath.Join(Dir, "post_create.sh")
+	// PostDeleteName is the script run after each delete, relative to the
+	// directory wtm runs in.
+	PostDeleteName = filepath.Join(Dir, "post_delete.sh")
 )
 
 // Config is read from .wtm/config.toml. Every option is optional.
@@ -66,7 +69,17 @@ func (c Config) Root(dir string) string {
 // PostCreateScript is the path of dir/.wtm/post_create.sh, or "" when there
 // is no such file.
 func PostCreateScript(dir string) string {
-	path := filepath.Join(dir, PostCreateName)
+	return script(dir, PostCreateName)
+}
+
+// PostDeleteScript is the path of dir/.wtm/post_delete.sh, or "" when there
+// is no such file.
+func PostDeleteScript(dir string) string {
+	return script(dir, PostDeleteName)
+}
+
+func script(dir, name string) string {
+	path := filepath.Join(dir, name)
 	if info, err := os.Stat(path); err != nil || info.IsDir() {
 		return ""
 	}

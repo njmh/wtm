@@ -75,7 +75,7 @@ func settle(t *testing.T, m model, cmd tea.Cmd) model {
 			continue
 		case spinner.TickMsg:
 			continue
-		case opDoneMsg, worktreesMsg, deleteStepMsg:
+		case opDoneMsg, worktreesMsg, deleteStepMsg, postDeleteDoneMsg:
 		default:
 			t.Fatalf("unexpected message %T", msg)
 		}

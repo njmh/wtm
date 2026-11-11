@@ -10,11 +10,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/njmh/wtm/internal/config"
 	"github.com/njmh/wtm/internal/git"
+	"github.com/njmh/wtm/internal/hook"
 )
 
 func newDeleteCmd() *cobra.Command {
-	var yes bool
+	var yes, noHook bool
 	cmd := &cobra.Command{
 		Use:     "delete <worktree>",
 		Aliases: []string{"rm"},
@@ -28,7 +30,10 @@ wtm asks before deleting unless --yes is given. When there's no terminal to ask
 in, such as in a script, --yes is required. If the branch has commits that
 aren't in its upstream (or in HEAD, when it has none), wtm warns about them but
 still deletes the branch: a squash-merged branch, or one whose upstream hasn't
-been fetched, looks unmerged too.`,
+been fetched, looks unmerged too.
+
+After a successful delete, .wtm/post_delete.sh is run in the current directory,
+if there is one.`,
 		Args:              exactArgs("<worktree>"),
 		ValidArgsFunction: completeWorktree,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -62,11 +67,32 @@ been fetched, looks unmerged too.`,
 			if err := repo.Delete(wt); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Deleted worktree %s.\n", name)
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Deleted worktree %s.\n", name)
+
+			script := config.PostDeleteScript(repo.Dir)
+			if noHook || script == "" {
+				return nil
+			}
+			fmt.Fprintf(out, "Running %s…\n", config.PostDeleteName)
+			h := hook.NewPostDelete(script, hook.Env{
+				Dir:    repo.Dir,
+				Root:   repo.WorktreeRoot(),
+				Name:   name,
+				Path:   wt.Path,
+				Branch: wt.Branch,
+			})
+			h.SetStdin(cmd.InOrStdin())
+			h.SetStdout(out)
+			h.SetStderr(cmd.ErrOrStderr())
+			if err := h.Run(); err != nil {
+				return fmt.Errorf("the worktree was deleted, but %s failed: %w", config.PostDeleteName, err)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "delete without asking first")
+	cmd.Flags().BoolVar(&noHook, "no-hook", false, "don't run "+config.PostDeleteName)
 	return cmd
 }
 

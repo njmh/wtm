@@ -224,6 +224,52 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+func TestDeleteRunsPostDeleteHook(t *testing.T) {
+	dir := gittest.NewContainer(t)
+	for _, name := range []string{"feat", "quiet", "fail", "dirty", "declined"} {
+		mustRun(t, dir, "create", name)
+	}
+	gittest.WriteFile(t, filepath.Join(dir, ".wtm", "post_delete.sh"), `echo "in $(pwd) for $WTM_WORKTREE_NAME at $WTM_WORKTREE_PATH on $WTM_BRANCH from '$WTM_BASE_BRANCH'"
+[ ! -e "$WTM_WORKTREE_PATH" ] || echo "still there"
+read answer
+echo "got $answer"
+echo oops >&2
+[ "$WTM_BRANCH" != fail ] || exit 3
+`)
+	// It runs in the directory wtm runs in, once the worktree is gone.
+	out, errOut, err := run(t, dir, "yes\n", "delete", "feat", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Deleted worktree feat.\nRunning .wtm/post_delete.sh…\nin " + dir + " for feat at " + filepath.Join(dir, "feat") + " on feat from ''\ngot yes\n"
+	if out != want || errOut != "oops\n" {
+		t.Errorf("stdout:\n%s\nwant:\n%s\nstderr: %q", out, want, errOut)
+	}
+
+	out, _, err = run(t, dir, "", "delete", "quiet", "--yes", "--no-hook")
+	if err != nil || out != "Deleted worktree quiet.\n" {
+		t.Errorf("--no-hook: err = %v, output %q", err, out)
+	}
+
+	_, _, err = run(t, dir, "", "delete", "fail", "--yes")
+	if err == nil || err.Error() != "the worktree was deleted, but .wtm/post_delete.sh failed: exit status 3" {
+		t.Errorf("failing hook: err = %v", err)
+	}
+	if _, ok := worktrees(t, dir)["fail"]; ok {
+		t.Error("worktree was kept after the hook failed")
+	}
+
+	// The hook only runs after a successful delete.
+	gittest.WriteFile(t, filepath.Join(dir, "dirty", "f.txt"), "x")
+	if out, _, err := run(t, dir, "", "delete", "dirty", "--yes"); err == nil || strings.Contains(out, "Running") {
+		t.Errorf("failed delete: err = %v, output %q", err, out)
+	}
+	pretendTerminal(t)
+	if out, _, err := run(t, dir, "n\n", "delete", "declined"); err != nil || out != "Nothing was deleted.\n" {
+		t.Errorf("declined delete: err = %v, output %q", err, out)
+	}
+}
+
 func TestDeleteRefusesToLoseWork(t *testing.T) {
 	dir := gittest.NewContainer(t)
 	mustRun(t, dir, "create", "dirty")

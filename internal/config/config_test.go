@@ -67,4 +67,13 @@ func TestPostCreateScript(t *testing.T) {
 	if PostCreateScript(other) != script {
 		t.Fatal("post_create.sh not found")
 	}
+
+	if PostDeleteScript(other) != "" {
+		t.Fatal("found a post_delete.sh that doesn't exist")
+	}
+	script = filepath.Join(other, PostDeleteName)
+	gittest.WriteFile(t, script, "true\n")
+	if PostDeleteScript(other) != script {
+		t.Fatal("post_delete.sh not found")
+	}
 }

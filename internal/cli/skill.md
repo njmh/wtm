@@ -16,8 +16,10 @@ wtm's configuration for its user.
 - `wtm delete` asks for confirmation, and refuses when stdin isn't a terminal.
   Pass `--yes` once the user has agreed to the delete: it permanently removes
   the directory and the branch.
-- `wtm create` runs `.wtm/post_create.sh`, which can be slow or interactive.
-  Pass `--no-hook` to skip it.
+- `wtm create` runs `.wtm/post_create.sh` and `wtm delete` runs
+  `.wtm/post_delete.sh`, which can be slow or interactive. Pass `--no-hook`
+  to skip the script, but only when the user wants that: it usually does
+  setup or cleanup they rely on.
 - Errors go to stderr and the exit status is 1.
 
 ## Layout
@@ -32,7 +34,8 @@ myproject/
 ├── .git            # file containing: gitdir: ./.bare
 ├── .wtm/           # optional wtm configuration
 │   ├── config.toml
-│   └── post_create.sh
+│   ├── post_create.sh
+│   └── post_delete.sh
 ├── main/
 └── feature-x/
 ```
@@ -43,7 +46,7 @@ myproject/
 |----------------------------------------------|-------|--------------------------------------------------------------|
 | `wtm list [--json]`                          | `ls`  | List the worktrees, as a table or as JSON                    |
 | `wtm create <name> [--base <b>] [--no-hook]` | `new` | Create a worktree on new branch `<name>` from branch `<b>` (default `main`), then run `post_create.sh` unless `--no-hook` |
-| `wtm delete <worktree> [-y]`                 | `rm`  | Delete the worktree, its directory and its branch            |
+| `wtm delete <worktree> [-y] [--no-hook]`     | `rm`  | Delete the worktree, its directory and its branch, then run `post_delete.sh` unless `--no-hook` |
 | `wtm rename <worktree> <new-name>`           | `mv`  | Rename the worktree's directory and branch                   |
 | `wtm prune`                                  |       | `git worktree prune`: forget worktrees whose directory is gone |
 | `wtm skill`                                  |       | Print this text                                              |
@@ -85,6 +88,9 @@ because squash-merged branches, and branches whose upstream hasn't been
 fetched, look unmerged too. Tell the user about that warning rather than
 assuming the commits are safe to lose.
 
+After a successful delete wtm runs `.wtm/post_delete.sh`, if there is one
+(see [below](#wtmpost_deletesh)).
+
 ## Configuration
 
 wtm reads an optional `.wtm/` directory in the directory it's started from.
@@ -116,17 +122,7 @@ dependencies, open an editor.
   can start interactive programs.
 - If it exits non-zero the worktree is kept and wtm reports an error. It
   isn't run again, so write it to be safe to re-run by hand.
-
-It's given these environment variables:
-
-| Variable            | Value                                                    |
-|---------------------|----------------------------------------------------------|
-| `WTM_WORKTREE_NAME` | Name of the new worktree, relative to `worktree_path`    |
-| `WTM_WORKTREE_PATH` | Absolute path of the new worktree                        |
-| `WTM_WORKTREE_ROOT` | Absolute path of `worktree_path`                         |
-| `WTM_BRANCH`        | The new branch (currently the same as the worktree name) |
-| `WTM_BASE_BRANCH`   | The branch it was created from                           |
-| `WTM_DIR`           | The directory wtm was started from, which holds `.wtm/`  |
+- It's given the [variables](#hook-variables) below.
 
 ```bash
 # e.g. share an env file and install dependencies
@@ -139,3 +135,43 @@ Files that aren't tracked by git exist only in the worktree they were created
 in, so copy or symlink shared ones from a fixed place such as `$WTM_DIR` or
 `$WTM_WORKTREE_ROOT/$WTM_BASE_BRANCH`. The base branch may not have a
 worktree, so check that a file exists before copying it from there.
+
+### `.wtm/post_delete.sh`
+
+Runs after each successful delete, from the TUI or `wtm delete`. Use it to
+clean up what `post_create.sh` set up outside the worktree: stop containers,
+drop a per-worktree database, remove a symlink or an editor workspace.
+
+- It's run with `bash`, so it doesn't need a shebang or to be executable.
+- The worktree's directory and branch are already gone when it runs, so its
+  working directory is the one wtm was started from (`$WTM_DIR`). It can't
+  read anything from the deleted worktree.
+- It's connected to the terminal, like `post_create.sh`.
+- When several worktrees are deleted together in the TUI, it runs once for
+  each, straight after that worktree is deleted.
+- It isn't run when the delete fails or is declined, or by `wtm prune`.
+- If it exits non-zero the worktree stays deleted and wtm reports an error.
+  Write it to cope with things that are already gone, e.g. a worktree that
+  was created with `--no-hook`.
+- It's given the [variables](#hook-variables) below. `WTM_WORKTREE_PATH` no
+  longer exists and `WTM_BASE_BRANCH` is empty.
+
+```bash
+# e.g. stop the containers post_create.sh started for this worktree
+set -euo pipefail
+docker compose -p "$WTM_WORKTREE_NAME" down --volumes || true
+```
+
+### Hook variables
+
+Both scripts are given these environment variables. All of them are always
+set, so they're safe to read under `set -u`.
+
+| Variable            | `post_create.sh`                                    | `post_delete.sh`                                  |
+|---------------------|-----------------------------------------------------|---------------------------------------------------|
+| `WTM_WORKTREE_NAME` | Name of the new worktree, relative to `worktree_path` | Name of the deleted worktree, as `wtm list` showed it (`./path` for one outside `worktree_path`) |
+| `WTM_WORKTREE_PATH` | Absolute path of the new worktree                   | Absolute path it had; the directory is gone       |
+| `WTM_WORKTREE_ROOT` | Absolute path of `worktree_path`                    | The same                                          |
+| `WTM_BRANCH`        | The new branch (currently the same as the worktree name) | The deleted branch; empty if `HEAD` was detached |
+| `WTM_BASE_BRANCH`   | The branch it was created from                      | Empty                                             |
+| `WTM_DIR`           | The directory wtm was started from, which holds `.wtm/` | The same                                      |

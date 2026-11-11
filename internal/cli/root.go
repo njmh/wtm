@@ -34,7 +34,8 @@ Run it with no command to open the interactive worktree manager, or run one of
 the commands below to do the same from the shell or a script.
 
 New worktrees go in the worktree_path set in .wtm/config.toml (by default the
-current directory), and .wtm/post_create.sh runs after each one is created.`,
+current directory). .wtm/post_create.sh runs after each one is created, and
+.wtm/post_delete.sh after each one is deleted.`,
 		Example: `  wtm                          Open the worktree manager
   wtm list                     List the worktrees
   wtm create feature-x         Create worktree and branch feature-x from main
