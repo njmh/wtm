@@ -27,6 +27,15 @@ func (m model) createNote() string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// deleteNote says that post_delete.sh will run, when there is one. after is
+// when, e.g. "afterwards".
+func (m model) deleteNote(after string) []string {
+	if config.PostDeleteScript(m.repo.Dir) == "" {
+		return nil
+	}
+	return []string{mutedStyle.Render("Runs " + config.PostDeleteName + " " + after + ".")}
+}
+
 func (m model) modalWidth() int {
 	return max(min(64, m.width-4), 20)
 }
@@ -110,8 +119,9 @@ func (m model) modalView() string {
 		if m.warnings[0] != "" {
 			lines = append(lines, warnStyle.Width(inner).Render("Warning: "+m.warnings[0]), "")
 		}
+		lines = append(lines, mutedStyle.Render("Fails safely if there are uncommitted changes."))
+		lines = append(lines, m.deleteNote("afterwards")...)
 		body := strings.Join(append(lines,
-			mutedStyle.Render("Fails safely if there are uncommitted changes."),
 			"",
 			hint("y", "delete", "n/esc", "cancel"),
 		), "\n")
@@ -170,11 +180,9 @@ func (m model) deleteManyView(style lipgloss.Style, inner int, hint string) stri
 			"Warning: branches marked ! have commits that aren't in their upstream (or HEAD). "+
 				"That's expected if they were squash-merged; otherwise those commits will be lost."), "")
 	}
-	tail = append(tail,
-		mutedStyle.Render("Any with uncommitted changes are left alone."),
-		"",
-		hint,
-	)
+	tail = append(tail, mutedStyle.Render("Any with uncommitted changes are left alone."))
+	tail = append(tail, m.deleteNote("after each delete")...)
+	tail = append(tail, "", hint)
 
 	nameW := 0
 	for _, wt := range m.deleting {

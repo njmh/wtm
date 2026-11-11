@@ -26,7 +26,7 @@ myproject/
 | C          | Create a worktree: `<worktree_path>/<name>` on new branch `<name>`, from a base branch (default `main`), then run `post_create.sh` |
 | Space      | Check or uncheck the selected worktree, to delete several at once      |
 | Esc        | Uncheck all                                                            |
-| D          | Delete the checked worktrees, or the selected one if none are checked, with their directories and branches |
+| D          | Delete the checked worktrees, or the selected one if none are checked, with their directories and branches, then run `post_delete.sh` for each |
 | R          | Rename the selected worktree's directory and branch (not while any are checked) |
 | P          | `git worktree prune`                                                   |
 | Q, ctrl+c  | Quit                                                                   |
@@ -49,7 +49,7 @@ Every action in the TUI is also a command:
 |----------------------------------------------|-------|--------------------------------------------------------------|
 | `wtm list [--json]`                          | `ls`  | List the worktrees, as a table or as JSON                    |
 | `wtm create <name> [-b <base>] [--no-hook]`  | `new` | Create a worktree on new branch `<name>` from `<base>` (default `main`), then run `post_create.sh` unless `--no-hook` |
-| `wtm delete <worktree> [-y]`                 | `rm`  | Delete the worktree, its directory and its branch            |
+| `wtm delete <worktree> [-y] [--no-hook]`     | `rm`  | Delete the worktree, its directory and its branch, then run `post_delete.sh` unless `--no-hook` |
 | `wtm rename <worktree> <new-name>`           | `mv`  | Rename the worktree's directory and branch                   |
 | `wtm prune`                                  |       | `git worktree prune`                                         |
 | `wtm skill`                                  |       | Describe wtm to an AI agent (see [AI agents](#ai-agents))    |
@@ -77,7 +77,8 @@ Run `wtm completion <shell> --help` for each shell's setup.
 ## AI agents
 
 `wtm skill` prints a description of wtm written for an AI coding agent: the
-commands, the configuration and how `post_create.sh` is run. Put it in an
+commands, the configuration and how `post_create.sh` and `post_delete.sh` are
+run. Put it in an
 agent's context before asking for help with wtm:
 
 ```sh
@@ -113,7 +114,8 @@ wtm reads an optional `.wtm/` directory in the directory it's started from:
 myproject/
 ├── .wtm/
 │   ├── config.toml
-│   └── post_create.sh
+│   ├── post_create.sh
+│   └── post_delete.sh
 └── ...
 ```
 
@@ -133,16 +135,8 @@ into `worktree_path`. Unknown options or invalid TOML stop wtm with an error.
 
 Runs with `bash` after each successful create, so it doesn't need to be
 executable. It's connected to the terminal while it runs, from the TUI or
-`wtm create`, so you see its output and it can start interactive programs. It runs inside the new worktree with:
-
-| Variable            | Value                                                    |
-|---------------------|----------------------------------------------------------|
-| `WTM_WORKTREE_NAME` | Name of the new worktree, relative to `worktree_path`    |
-| `WTM_WORKTREE_PATH` | Absolute path of the new worktree                        |
-| `WTM_WORKTREE_ROOT` | Absolute path of `worktree_path`                         |
-| `WTM_BRANCH`        | The new branch (currently the same as the worktree name) |
-| `WTM_BASE_BRANCH`   | The branch it was created from                           |
-| `WTM_DIR`           | The directory wtm was started from                       |
+`wtm create`, so you see its output and it can start interactive programs. It
+runs inside the new worktree, with the [variables](#hook-variables) below.
 
 ```bash
 # e.g. share an env file and install dependencies
@@ -152,6 +146,36 @@ npm install
 
 If the script exits non-zero the worktree is kept and wtm reports an error.
 In the TUI, wtm first waits for Enter so you can read the script's output.
+
+### `.wtm/post_delete.sh`
+
+Runs with `bash` after each successful delete, from the TUI or `wtm delete`,
+and is connected to the terminal in the same way. The worktree's directory and
+branch are already gone, so it runs in the directory wtm was started from.
+When several worktrees are deleted together in the TUI, it runs once for each,
+straight after that worktree is deleted. It isn't run for a worktree that
+couldn't be deleted, or by `wtm prune`.
+
+```bash
+# e.g. remove what post_create.sh set up outside the worktree
+docker compose -p "$WTM_WORKTREE_NAME" down --volumes
+```
+
+If the script exits non-zero the worktree stays deleted and wtm reports an
+error, after waiting for Enter in the TUI. `wtm delete --no-hook` skips it.
+
+### Hook variables
+
+Both scripts are given these environment variables:
+
+| Variable            | `post_create.sh`                                    | `post_delete.sh`                                  |
+|---------------------|-----------------------------------------------------|---------------------------------------------------|
+| `WTM_WORKTREE_NAME` | Name of the new worktree, relative to `worktree_path` | Name of the deleted worktree, as `wtm list` showed it |
+| `WTM_WORKTREE_PATH` | Absolute path of the new worktree                   | Absolute path it had; the directory is gone       |
+| `WTM_WORKTREE_ROOT` | Absolute path of `worktree_path`                    | The same                                          |
+| `WTM_BRANCH`        | The new branch (currently the same as the worktree name) | The deleted branch; empty if `HEAD` was detached |
+| `WTM_BASE_BRANCH`   | The branch it was created from                      | Empty                                             |
+| `WTM_DIR`           | The directory wtm was started from                  | The same                                          |
 
 ## Install
 

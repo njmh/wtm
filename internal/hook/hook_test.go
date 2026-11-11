@@ -50,3 +50,33 @@ echo "dir=$WTM_DIR root=$WTM_WORKTREE_ROOT name=$WTM_WORKTREE_NAME path=$WTM_WOR
 		t.Errorf("err = %v, output:\n%s", err, out)
 	}
 }
+
+func TestPostDelete(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, ".wtm", "post_delete.sh")
+	gittest.WriteFile(t, script, `echo "pwd=$(pwd)"
+echo "name=$WTM_WORKTREE_NAME path=$WTM_WORKTREE_PATH branch=$WTM_BRANCH base=${WTM_BASE_BRANCH-unset}"
+`)
+	// The worktree's directory is gone, so the script runs in Dir instead.
+	path := filepath.Join(dir, "feat")
+	// A value in wtm's own environment mustn't reach the script.
+	t.Setenv("WTM_BASE_BRANCH", "inherited")
+
+	h := NewPostDelete(script, Env{Dir: dir, Root: dir, Name: "feat", Path: path, Branch: "feat"})
+	if h.Dir() != dir {
+		t.Errorf("hook runs in %s", h.Dir())
+	}
+	var out bytes.Buffer
+	h.SetStdout(&out)
+	h.SetStderr(&out)
+	if err := h.Run(); err != nil {
+		t.Fatalf("hook failed: %v\n%s", err, out.String())
+	}
+	want := "pwd=" + dir + "\nname=feat path=" + path + " branch=feat base=\n"
+	if out.String() != want {
+		t.Errorf("hook output:\n%s\nwant:\n%s", out.String(), want)
+	}
+}

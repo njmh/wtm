@@ -36,7 +36,7 @@ type (
 		selectPath string
 		// postCreate is set after a successful create when there is a
 		// .wtm/post_create.sh to run.
-		postCreate *hook.PostCreate
+		postCreate *hook.Script
 	}
 	postCreateDoneMsg struct {
 		status string
@@ -45,6 +45,15 @@ type (
 	// deleteStepMsg is the result of deleting m.deleting[i]. Worktrees are
 	// deleted one at a time so the busy popover can show progress.
 	deleteStepMsg struct {
+		i   int
+		err error
+		// postDelete is set after a successful delete when there is a
+		// .wtm/post_delete.sh to run.
+		postDelete *hook.Script
+	}
+	// postDeleteDoneMsg is the result of running .wtm/post_delete.sh for
+	// m.deleting[i].
+	postDeleteDoneMsg struct {
 		i   int
 		err error
 	}
@@ -65,6 +74,8 @@ type model struct {
 	deleting   []git.Worktree // the worktrees in the delete popover, then being deleted
 	warnings   []string       // UnmergedWarning for each of deleting
 	deleteErrs []error        // the result of deleting each of deleting
+	hookErrs   []error        // the result of post_delete.sh for each of deleting
+	hooksRun   int            // how many times post_delete.sh has run for deleting
 
 	nameInput   textinput.Model
 	baseInput   textinput.Model

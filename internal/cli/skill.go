@@ -75,8 +75,9 @@ func newSkillCmd() *cobra.Command {
 		Use:   "skill",
 		Short: "Describe wtm to an AI agent",
 		Long: `Print a description of wtm for an AI agent: its commands, its configuration
-and how .wtm/post_create.sh is run. Add it to an agent's context before asking
-for help with wtm, such as writing a post_create.sh for your project.
+and how .wtm/post_create.sh and .wtm/post_delete.sh are run. Add it to an
+agent's context before asking for help with wtm, such as writing a
+post_create.sh for your project.
 
 "wtm skill install" sets an agent up to run this by itself.`,
 		Example: `  wtm skill | pbcopy

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -54,11 +55,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case deleteStepMsg:
 		m.deleteErrs[msg.i] = msg.err
-		if next := msg.i + 1; next < len(m.deleting) {
-			m.activity = m.deleteActivity(next)
-			return m, m.deleteStep(next)
+		if msg.err == nil && msg.postDelete != nil {
+			// The hook runs before the next delete, so each script's output
+			// can be read on its own.
+			i := msg.i
+			m.activity = fmt.Sprintf("Running %s for %s…", config.PostDeleteName, m.repo.Name(m.deleting[i]))
+			return m, tea.Exec(&pauseOnFailure{Script: msg.postDelete, name: config.PostDeleteName}, func(err error) tea.Msg {
+				return postDeleteDoneMsg{i: i, err: err}
+			})
 		}
-		return m.finish(m.deleteResult())
+		return m.afterDelete(msg.i)
+
+	case postDeleteDoneMsg:
+		m.hookErrs[msg.i] = msg.err
+		m.hooksRun++
+		return m.afterDelete(msg.i)
 
 	case postCreateDoneMsg:
 		m.endBusy()
@@ -117,6 +128,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// afterDelete moves on once m.deleting[i] is dealt with: to the next
+// worktree, or to the result when that was the last.
+func (m model) afterDelete(i int) (tea.Model, tea.Cmd) {
+	if next := i + 1; next < len(m.deleting) {
+		m.activity = m.deleteActivity(next)
+		return m, m.deleteStep(next)
+	}
+	return m.finish(m.deleteResult())
+}
+
 // finish ends the busy popover with an operation's result and reloads the list.
 func (m model) finish(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	m.endBusy()
@@ -130,7 +151,7 @@ func (m model) finish(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.err == nil && msg.postCreate != nil {
 		status := msg.status
 		return m, tea.Batch(m.loadWorktrees(), m.startBusy("Running "+config.PostCreateName+"…",
-			tea.Exec(&pauseOnFailure{PostCreate: msg.postCreate}, func(err error) tea.Msg {
+			tea.Exec(&pauseOnFailure{Script: msg.postCreate, name: config.PostCreateName}, func(err error) tea.Msg {
 				return postCreateDoneMsg{status: status, err: err}
 			})))
 	}
@@ -297,6 +318,8 @@ func (m model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
 		m.deleteErrs = make([]error, len(m.deleting))
+		m.hookErrs = make([]error, len(m.deleting))
+		m.hooksRun = 0
 		return m, m.startBusy(m.deleteActivity(0), m.deleteStep(0))
 	case "n", "N", "esc", "q":
 		m.mode = modeList
@@ -309,7 +332,17 @@ func (m model) updateDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m model) deleteStep(i int) tea.Cmd {
 	g, wt := m.repo, m.deleting[i]
 	return func() tea.Msg {
-		return deleteStepMsg{i: i, err: g.Delete(wt)}
+		msg := deleteStepMsg{i: i, err: g.Delete(wt)}
+		if script := config.PostDeleteScript(g.Dir); msg.err == nil && script != "" {
+			msg.postDelete = hook.NewPostDelete(script, hook.Env{
+				Dir:    g.Dir,
+				Root:   g.WorktreeRoot(),
+				Name:   g.Name(wt),
+				Path:   wt.Path,
+				Branch: wt.Branch,
+			})
+		}
+		return msg
 	}
 }
 
@@ -322,23 +355,45 @@ func (m model) deleteActivity(i int) string {
 }
 
 // deleteResult reports how a delete went. A failed single delete shows git's
-// error as it is; when several were deleted, the failures are listed.
+// error as it is; when several were deleted, the failures are listed. A
+// worktree whose post_delete.sh failed was still deleted, and is reported
+// separately.
 func (m model) deleteResult() opDoneMsg {
 	n := len(m.deleting)
+	ran := ""
+	if m.hooksRun > 0 {
+		ran = " Ran " + config.PostDeleteName + "."
+	}
 	if n == 1 {
-		return opDoneMsg{status: fmt.Sprintf("Deleted worktree %s.", m.repo.Name(m.deleting[0])), err: m.deleteErrs[0]}
-	}
-	var failed []string
-	for i, err := range m.deleteErrs {
-		if err != nil {
-			failed = append(failed, "• "+m.repo.Name(m.deleting[i])+": "+briefError(err))
+		err := m.deleteErrs[0]
+		if err == nil && m.hookErrs[0] != nil {
+			err = fmt.Errorf("the worktree was deleted, but %s failed: %w", config.PostDeleteName, m.hookErrs[0])
 		}
+		return opDoneMsg{status: fmt.Sprintf("Deleted worktree %s.", m.repo.Name(m.deleting[0])) + ran, err: err}
 	}
-	if len(failed) == 0 {
-		return opDoneMsg{status: fmt.Sprintf("Deleted %d worktrees.", n)}
+	list := func(errs []error) []string {
+		var failed []string
+		for i, err := range errs {
+			if err != nil {
+				failed = append(failed, "• "+m.repo.Name(m.deleting[i])+": "+briefError(err))
+			}
+		}
+		return failed
 	}
-	return opDoneMsg{err: fmt.Errorf("deleted %d of %d worktrees. %s:\n\n%s",
-		n-len(failed), n, plural(len(failed), "This one wasn't", "These weren't"), strings.Join(failed, "\n"))}
+	failed, hookFailed := list(m.deleteErrs), list(m.hookErrs)
+	if len(failed) == 0 && len(hookFailed) == 0 {
+		return opDoneMsg{status: fmt.Sprintf("Deleted %d worktrees.", n) + ran}
+	}
+	report := fmt.Sprintf("deleted %d worktrees.", n)
+	if len(failed) > 0 {
+		report = fmt.Sprintf("deleted %d of %d worktrees. %s:\n\n%s",
+			n-len(failed), n, plural(len(failed), "This one wasn't", "These weren't"), strings.Join(failed, "\n"))
+	}
+	if len(hookFailed) > 0 {
+		report += fmt.Sprintf("\n\n%s failed after deleting %s:\n\n%s",
+			config.PostDeleteName, plural(len(hookFailed), "this one", "these"), strings.Join(hookFailed, "\n"))
+	}
+	return opDoneMsg{err: errors.New(report)}
 }
 
 // briefError is err on one line, without the command a git error starts
